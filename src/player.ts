@@ -111,6 +111,7 @@ export function usePlayer(
       if (!item || !media) return;
       const pos = media.currentTime || 0,
         duration = Number.isFinite(media.duration) ? media.duration : item.duration;
+      const done = completed || media.ended;
       const countPlay = !counted.current && (forceCount || pos >= Math.min(30, duration / 2));
       if (countPlay) counted.current = true;
       try {
@@ -120,17 +121,17 @@ export function usePlayer(
             itemId: item.path,
             position: pos,
             paused: media.paused,
-            stopped: completed,
+            stopped: done,
           });
         else
           await native('update_progress', {
             id: item.id,
             position: pos,
             duration,
-            completed,
+            completed: done,
             countPlay,
           });
-        if (countPlay || completed) progressCallback.current();
+        if (countPlay || done) progressCallback.current();
       } catch {
         /* Local playback continues through temporary server failures. */
       }

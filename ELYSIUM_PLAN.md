@@ -25,11 +25,11 @@ Elysium has its own name, icon, artwork, and design assets. The default home scr
 
 ### Main desktop window
 
-Use a silver or graphite toolbar with back/forward navigation, transport controls, track display, volume, and search. Below it, a persistent source sidebar leads to Home, Music, Movies, TV Shows, Music Videos, Playlists, Sources, and Downloads when available. Keep imports, network state, and background activity in a quiet status area.
+Use silver or graphite chrome with library navigation and search at the top. Following the user's November 14, 2026 direction, consolidate transport, current-track information, seek, volume, shuffle/repeat, queue, equalizer, mini-player, and full-screen controls in one persistent bottom player. Video options and visualizer selection expand from that same bottom strip. A persistent source sidebar leads to Home, Music, Movies, TV Shows, Music Videos, Playlists, Sources, and Downloads when available. Keep imports, network state, and background activity in a quiet status area.
 
 Music defaults to a sortable song table. An optional column browser above it filters Genre → Artist → Album; selecting a column value narrows the next column and the table. Support multiple selection, drag to playlist, keyboard navigation, reorderable columns, and saved per-view sort order. Album and artist views are one click away. Dense, comfortable, and large-text settings change spacing without hiding core actions.
 
-An optional right drawer holds Up Next, lyrics, or information. The bottom playback strip can remain visible while the user browses music or video; the toolbar and strip must never present conflicting playback state. Artwork, duration, source availability, and the selected item remain legible at common desktop sizes.
+An optional right drawer holds Up Next, lyrics, or information. The bottom playback strip remains visible while the user browses music or video. Artwork, duration, source availability, and the selected item remain legible at common desktop sizes.
 
 ### Video and theater views
 

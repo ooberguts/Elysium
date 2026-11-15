@@ -12,14 +12,14 @@ Open the packaged **Elysium.app** on macOS or the Windows installer from this pr
 2. Open **Songs** and double-click a song. Try the column browser, search, queue, equalizer, and Now Playing visualizers.
 3. Open **Movies** or **TV shows** to test video playback, seeking, subtitles, and resume.
 4. Use **Add a library folder** for your own media. A NAS share must first be mounted in Finder or File Explorer; Windows UNC paths can also be entered in Add Folder.
-5. Select items and choose **Get Info**. Library-only edits are the default. Explicit MP3/FLAC file writes make backups and verify the encoded audio before replacing a file. Choose **Library → Stop playback** before writing the current item's file.
+5. Select items and choose **Get Info**. Library-only edits are the default. Explicit MP3/FLAC file writes make backups and verify the encoded audio before replacing a file. Use the **Stop** button in the bottom player before writing the current item's file.
 
 The app never moves or deletes your source media. Compatibility conversion creates a separate cached copy. Testing with a small copied collection is a useful way to check your own tag formats and network setup.
 
 ## Included in this build
 
 - Persistent SQLite library with songs, albums, artists, movies, and TV episodes.
-- Classic Silver and Graphite themes, compact song rows, virtualized song tables, column browsing, text search, sorting, favorites, and ratings.
+- Classic Silver and Graphite themes, compact song rows, virtualized song tables, column browsing, text search, sorting, favorites, and ratings. All playback controls live in the bottom strip; the top is reserved for navigation and search.
 - Local files, external drives, mounted network folders, incremental rescans, scan cancellation, offline retention, and source rebinding.
 - Music and video playback, seek, speed, shuffle, repeat, persistent queue, resume checkpoints, and basic OS Media Session integration.
 - A compact always-on-top player that keeps the same playback session alive when the window changes size.

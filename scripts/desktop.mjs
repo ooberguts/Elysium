@@ -1,11 +1,17 @@
 import { existsSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 
 const cargo = join(homedir(), '.cargo', 'bin');
 const env = { ...process.env };
-if (existsSync(cargo)) env.PATH = `${cargo}${delimiter}${env.PATH || ''}`;
+// A plain object is case-sensitive even on Windows, where the inherited key
+// is often "Path". Pass one normalized key and retain Node/npm's directory.
+const inheritedPath = process.env.PATH || process.env.Path || '';
+for (const key of Object.keys(env)) if (key.toLowerCase() === 'path') delete env[key];
+env.PATH = [dirname(process.execPath), ...(existsSync(cargo) ? [cargo] : []), inheritedPath].join(
+  delimiter,
+);
 const args = process.argv.slice(2);
 if (args[0] === 'build' && !args.includes('--bundles'))
   args.push(

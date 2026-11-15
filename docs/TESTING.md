@@ -17,6 +17,8 @@ Get Info displayed a field-level before/after preview and saved a library-only g
 
 The generated movie played in the integrated video surface. Pause and seeking worked. Quitting and reopening restored the library, playlist, current item, and a paused movie checkpoint with the intended small resume rewind.
 
+The revised interface was checked in the packaged app with all global playback controls in the bottom strip. Music transport, seek, volume, queue, equalizer, mini-player, and full-screen actions fit at the standard desktop size. The mini-player keeps transport, pinning, seek, and volume at the bottom. Video speed, subtitles, and skip controls expand from the same bottom player rather than appearing over the video. The macOS bundle also passed strict recursive code-signature verification with its local test signature.
+
 ## Qualification still needed
 
 Windows installation and native tests run in GitHub Actions; hardware playback and UI behavior also need a real Windows test. Live NAS disconnect/reconnect behavior, a real Jellyfin server, large collections, unusual metadata, external subtitle files, and broader codec coverage need user/platform testing. The generated local fixture collection does not establish those cases.

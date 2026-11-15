@@ -21,6 +21,7 @@ import {
   Mic2,
   Minimize2,
   Music2,
+  MonitorPlay,
   Pause,
   Pin,
   Play,
@@ -32,6 +33,7 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  Square,
   SlidersHorizontal,
   Sparkles,
   Subtitles,
@@ -596,6 +598,29 @@ export default function App() {
     });
   }
 
+  const volumeControls = (
+    <div className="footer-volume">
+      <button
+        className="icon-button"
+        aria-label={playback.muted ? 'Unmute' : 'Mute'}
+        onClick={() => player.set((s) => ({ ...s, muted: !s.muted }))}
+      >
+        {playback.muted || !playback.volume ? <VolumeX size={18} /> : <Volume2 size={18} />}
+      </button>
+      <input
+        type="range"
+        aria-label="Volume"
+        min="0"
+        max="1"
+        step="0.01"
+        value={playback.muted ? 0 : playback.volume}
+        onChange={(e) =>
+          player.set((s) => ({ ...s, volume: Number(e.target.value), muted: false }))
+        }
+      />
+    </div>
+  );
+
   const transport = (
     <>
       <button
@@ -609,8 +634,8 @@ export default function App() {
       <button
         className="transport-play"
         aria-label={playback.playing ? 'Pause' : 'Play'}
-        disabled={!current || player.preparing}
-        onClick={() => void player.toggle()}
+        disabled={(!current && !filtered.length) || player.preparing}
+        onClick={() => (current ? void player.toggle() : filtered[0] && play(filtered[0]))}
       >
         {player.preparing ? (
           <LoaderCircle className="spin" size={24} />
@@ -628,6 +653,15 @@ export default function App() {
       >
         <SkipForward fill="currentColor" size={19} />
       </button>
+      <button
+        className="icon-button"
+        aria-label="Stop playback"
+        title="Stop playback"
+        disabled={!current}
+        onClick={() => void player.stop()}
+      >
+        <Square size={13} fill="currentColor" />
+      </button>
     </>
   );
 
@@ -638,7 +672,7 @@ export default function App() {
         const menu = button?.closest('details');
         if (menu) menu.removeAttribute('open');
       }}
-      className={`app ${mini ? 'mini-mode' : ''} ${compact ? 'compact' : ''}`}
+      className={`app ${mini ? 'mini-mode' : ''} ${compact ? 'compact' : ''} ${nowPlaying && current && !mini ? 'expanded-player' : ''}`}
       data-theme={theme}
     >
       <audio ref={player.audio} crossOrigin="anonymous" preload="metadata" />
@@ -671,10 +705,6 @@ export default function App() {
                 <Upload size={15} />
                 Import M3U playlist…
               </button>
-              <button disabled={!current} onClick={() => void player.stop()}>
-                <Pause size={15} />
-                Stop playback
-              </button>
               <hr />
               <button onClick={() => void exportBackup()}>
                 <Download size={15} />
@@ -694,52 +724,21 @@ export default function App() {
             <span />
             YOUR PERSONAL MEDIA CENTER
           </span>
-          <button className="subtle-button" onClick={() => void toggleMini()}>
-            <Minimize2 size={14} />
-            Mini player
-          </button>
         </div>
       </header>
       <div className="main-toolbar">
-        <div className="toolbar-transport">{transport}</div>
-        <div className="lcd-display" onDoubleClick={() => setNowPlaying(!nowPlaying)}>
-          <span className="lcd-title">{current?.title || 'A place for all your favorites.'}</span>
-          <span className="lcd-subtitle">
-            {player.preparing
-              ? 'Preparing a compatible copy · originals stay untouched'
-              : current
-                ? [current.artist || current.series, current.album || current.year]
-                    .filter(Boolean)
-                    .join(' · ') || current.format
-                : 'Music · Movies · Television'}
-          </span>
-          <div className="lcd-progress">
-            <div
-              style={{
-                width: `${playback.duration > 0 ? (playback.position / playback.duration) * 100 : 0}%`,
-              }}
-            />
-          </div>
-        </div>
-        <div className="toolbar-volume">
+        <div className="library-location">
           <button
             className="icon-button"
-            aria-label={playback.muted ? 'Unmute' : 'Mute'}
-            onClick={() => player.set((s) => ({ ...s, muted: !s.muted }))}
+            aria-label="Go to library home"
+            onClick={() => navigate('home')}
+            disabled={view === 'home'}
           >
-            {playback.muted || !playback.volume ? <VolumeX size={18} /> : <Volume2 size={18} />}
+            <ChevronLeft size={18} />
           </button>
-          <input
-            type="range"
-            aria-label="Volume"
-            min="0"
-            max="1"
-            step="0.01"
-            value={playback.muted ? 0 : playback.volume}
-            onChange={(e) =>
-              player.set((s) => ({ ...s, volume: Number(e.target.value), muted: false }))
-            }
-          />
+          <span>Library</span>
+          <ChevronRight size={12} />
+          <strong>{selectedPlaylist?.name || names[view]}</strong>
         </div>
         <label className="global-search">
           <Search size={16} />
@@ -883,13 +882,6 @@ export default function App() {
                 Library
               </button>
               <span>{current?.title}</span>
-              <button
-                className="icon-button"
-                aria-label="Full screen"
-                onClick={() => void fullScreen()}
-              >
-                <Maximize2 size={17} />
-              </button>
             </div>
             <video
               ref={player.video}
@@ -910,49 +902,6 @@ export default function App() {
                 />
               )}
             </video>
-            <div className="stage-controls">
-              <button onClick={() => player.seek(playback.position - 10)}>−10s</button>
-              <button
-                className="primary"
-                aria-label={playback.playing ? 'Pause video' : 'Play video'}
-                onClick={() => void player.toggle()}
-              >
-                {playback.playing ? <Pause size={16} /> : <Play size={16} />}
-                {playback.playing ? 'Pause' : 'Play'}
-              </button>
-              <button onClick={() => player.seek(playback.position + 10)}>+10s</button>
-              <label>
-                Speed
-                <select
-                  aria-label="Playback speed"
-                  value={rate}
-                  onChange={(e) => setRate(Number(e.target.value))}
-                >
-                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => (
-                    <option key={r} value={r}>
-                      {r}×
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <button onClick={() => void attachSubtitle()}>
-                <Subtitles size={16} />
-                {subtitleName || 'Add subtitles'}
-              </button>
-              {subtitleUrl && (
-                <button
-                  className="icon-button"
-                  aria-label="Remove subtitles"
-                  onClick={() => {
-                    URL.revokeObjectURL(subtitleUrl);
-                    setSubtitleUrl('');
-                    setSubtitleName('');
-                  }}
-                >
-                  <X size={15} />
-                </button>
-              )}
-            </div>
           </div>
 
           <div className={`music-stage ${nowPlaying && current?.kind === 'music' ? 'shown' : ''}`}>
@@ -960,22 +909,6 @@ export default function App() {
               <button onClick={() => setNowPlaying(false)}>
                 <ArrowLeft size={16} />
                 Library
-              </button>
-              <select
-                aria-label="Visualizer preset"
-                value={visualMode}
-                onChange={(e) => setVisualMode(e.target.value)}
-              >
-                <option value="spectrum">Spectrum</option>
-                <option value="waveform">Oscilloscope</option>
-                <option value="ambient">Ambient</option>
-              </select>
-              <button
-                className="icon-button"
-                aria-label="Full screen visualizer"
-                onClick={() => void fullScreen()}
-              >
-                <Maximize2 size={17} />
               </button>
             </div>
             <div className="now-playing-art">
@@ -1319,14 +1252,6 @@ export default function App() {
                     </p>
                   </div>
                   <div className="view-header-actions">
-                    <button
-                      className="subtle-button"
-                      disabled={!filtered.length}
-                      onClick={() => play(filtered[0])}
-                    >
-                      <Play size={15} fill="currentColor" />
-                      Play
-                    </button>
                     <button className="primary" onClick={() => void importFiles()}>
                       <Plus size={16} />
                       Add media
@@ -1697,14 +1622,6 @@ export default function App() {
 
       <div className="mini-header">
         <span>ELYSIUM</span>
-        <button
-          className="icon-button"
-          aria-label={pinned ? 'Unpin mini player' : 'Pin mini player'}
-          aria-pressed={pinned}
-          onClick={() => void togglePin()}
-        >
-          <Pin size={14} fill={pinned ? 'currentColor' : 'none'} />
-        </button>
         <button onClick={() => void toggleMini()}>
           <Maximize2 size={13} />
           Library
@@ -1785,30 +1702,108 @@ export default function App() {
         <div className="footer-visual">
           <Visualizer player={player} mode={visualMode} />
         </div>
-        <div className="footer-actions">
-          <button
-            className={`icon-button ${eqOpen ? 'active' : ''}`}
-            aria-label="Equalizer"
-            onClick={() => setEqOpen(!eqOpen)}
-          >
-            <SlidersHorizontal size={18} />
-          </button>
-          <button
-            className={`icon-button ${queueOpen ? 'active' : ''}`}
-            aria-label="Open queue"
-            aria-pressed={queueOpen}
-            onClick={() => setQueueOpen(!queueOpen)}
-          >
-            <ListMusic size={20} />
-          </button>
-          <button
-            className="icon-button"
-            aria-label="Now Playing"
-            onClick={() => setNowPlaying(!nowPlaying)}
-          >
-            <Maximize2 size={17} />
-          </button>
+        <div className="footer-tools">
+          {volumeControls}
+          <div className="footer-actions">
+            <button
+              className={`icon-button ${eqOpen ? 'active' : ''}`}
+              aria-label="Equalizer"
+              title="Equalizer"
+              onClick={() => setEqOpen(!eqOpen)}
+            >
+              <SlidersHorizontal size={18} />
+            </button>
+            <button
+              className={`icon-button ${queueOpen ? 'active' : ''}`}
+              aria-label="Open queue"
+              title="Up Next"
+              aria-pressed={queueOpen}
+              onClick={() => setQueueOpen(!queueOpen)}
+            >
+              <ListMusic size={20} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Mini player"
+              title="Mini player"
+              onClick={() => void toggleMini()}
+            >
+              <Minimize2 size={17} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Now Playing"
+              title="Now Playing"
+              disabled={!current}
+              onClick={() => setNowPlaying(!nowPlaying)}
+            >
+              <MonitorPlay size={18} />
+            </button>
+            <button
+              className="icon-button"
+              aria-label="Full screen"
+              title="Full screen"
+              disabled={!current}
+              onClick={() => void fullScreen()}
+            >
+              <Maximize2 size={17} />
+            </button>
+          </div>
         </div>
+        {nowPlaying &&
+          current &&
+          !mini &&
+          (current.kind !== 'music' ? (
+            <div className="footer-extra-controls">
+              <button onClick={() => player.seek(playback.position - 10)}>−10s</button>
+
+              <button onClick={() => player.seek(playback.position + 10)}>+10s</button>
+              <label>
+                Speed
+                <select
+                  aria-label="Playback speed"
+                  value={rate}
+                  onChange={(e) => setRate(Number(e.target.value))}
+                >
+                  {[0.5, 0.75, 1, 1.25, 1.5, 2].map((r) => (
+                    <option key={r} value={r}>
+                      {r}×
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button onClick={() => void attachSubtitle()}>
+                <Subtitles size={16} />
+                {subtitleName || 'Add subtitles'}
+              </button>
+              {subtitleUrl && (
+                <button
+                  className="icon-button"
+                  aria-label="Remove subtitles"
+                  onClick={() => {
+                    URL.revokeObjectURL(subtitleUrl);
+                    setSubtitleUrl('');
+                    setSubtitleName('');
+                  }}
+                >
+                  <X size={15} />
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="footer-extra-controls">
+              <span>Visualizer</span>
+              <select
+                aria-label="Visualizer preset"
+                value={visualMode}
+                onChange={(e) => setVisualMode(e.target.value)}
+              >
+                <option value="spectrum">Spectrum</option>
+                <option value="waveform">Oscilloscope</option>
+                <option value="ambient">Ambient</option>
+              </select>
+            </div>
+          ))}
       </footer>
       {mini && (
         <div className="mini-seek">
@@ -1823,6 +1818,15 @@ export default function App() {
             onChange={(e) => player.seek(Number(e.target.value))}
           />
           <span>{seconds(playback.duration)}</span>
+          <button
+            className="icon-button"
+            aria-label={pinned ? 'Unpin mini player' : 'Pin mini player'}
+            aria-pressed={pinned}
+            onClick={() => void togglePin()}
+          >
+            <Pin size={14} fill={pinned ? 'currentColor' : 'none'} />
+          </button>
+          {volumeControls}
         </div>
       )}
       {eqOpen && (
