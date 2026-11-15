@@ -61,11 +61,20 @@ import {
   SourcesView,
   TrackTable,
   VideoDetail,
-  Visualizer,
 } from './components';
 import { chooseFiles, chooseFolder, desktop, loadLibrary, native, open, savePath } from './bridge';
 import { albumGroups, filterItems, seconds, unique, viewItems } from './domain';
 import { usePlayer } from './player';
+import { Visualizer, VisualizerOptions } from './visualizers/Visualizer';
+import {
+  DEFAULT_VISUALIZER,
+  getVisualizer,
+  stepVisualizer,
+  randomVisualizer,
+  PresetClock,
+  VISUALIZER_FAMILIES,
+  type VisualizerQuality,
+} from './visualizers/catalog';
 import {
   EMPTY_LIBRARY,
   type JellyfinLibrary,
@@ -129,7 +138,11 @@ export default function App() {
     [pinned, setPinned] = useState(true),
     [queueOpen, setQueueOpen] = useState(false),
     [nowPlaying, setNowPlaying] = useState(false),
-    [visualMode, setVisualMode] = useState('spectrum'),
+    [visualMode, setVisualMode] = useState(DEFAULT_VISUALIZER),
+    [visualQuality, setVisualQuality] = useState<VisualizerQuality>('balanced'),
+    [visualAuto, setVisualAuto] = useState(false),
+    [visualInfo, setVisualInfo] = useState(true),
+    [visualReduced, setVisualReduced] = useState(false),
     [eqOpen, setEqOpen] = useState(false);
   const [sourceDialog, setSourceDialog] = useState(false),
     [playlistDialog, setPlaylistDialog] = useState(false),
@@ -178,6 +191,8 @@ export default function App() {
     void refresh().catch(() => {});
   });
   const { state: playback, current } = player;
+  const visualPlaying = useRef(playback.playing);
+  visualPlaying.current = playback.playing;
   const selectedPlaylist = library.playlists.find((p) => view === `playlist:${p.id}`);
   const baseItems = useMemo(() => viewItems(view, library, allItems), [view, library, allItems]);
   const filtered = useMemo(() => {
@@ -262,7 +277,11 @@ export default function App() {
         setTheme(data.settings.theme || 'silver');
         setCompact(data.settings.compact === 'true');
         setBrowser(data.settings.browser !== 'false');
-        setVisualMode(data.settings.visualMode || 'spectrum');
+        setVisualMode(getVisualizer(data.settings.visualMode).id);
+        setVisualQuality(data.settings.visualQuality === 'high' ? 'high' : 'balanced');
+        setVisualAuto(data.settings.visualAuto === 'true');
+        setVisualInfo(data.settings.visualInfo !== 'false');
+        setVisualReduced(data.settings.visualReduced === 'true');
         setServerAddress(data.settings.serverAddress || '');
         if (data.settings.player)
           try {
@@ -294,12 +313,28 @@ export default function App() {
           compact: String(compact),
           browser: String(browser),
           visualMode,
+          visualQuality,
+          visualAuto: String(visualAuto),
+          visualInfo: String(visualInfo),
+          visualReduced: String(visualReduced),
           serverAddress,
         },
       }).catch((e) => notify(String(e)));
     }, 400);
     return () => clearTimeout(timer);
-  }, [theme, compact, browser, visualMode, serverAddress, loaded, notify]);
+  }, [
+    theme,
+    compact,
+    browser,
+    visualMode,
+    visualQuality,
+    visualAuto,
+    visualInfo,
+    visualReduced,
+    serverAddress,
+    loaded,
+    notify,
+  ]);
   useEffect(() => {
     if (!loaded || !desktop) return;
     const timer = setTimeout(() => {
@@ -362,6 +397,26 @@ export default function App() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [player, selected]);
+
+  useEffect(() => {
+    if (!visualAuto || !nowPlaying || mini || current?.kind !== 'music') return;
+    const clock = new PresetClock();
+    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    let last = performance.now();
+    const timer = window.setInterval(() => {
+      const now = performance.now();
+      if (
+        clock.tick(
+          (now - last) / 1000,
+          visualPlaying.current && !document.hidden,
+          visualReduced || motion.matches,
+        )
+      )
+        setVisualMode(randomVisualizer(visualMode).id);
+      last = now;
+    }, 500);
+    return () => window.clearInterval(timer);
+  }, [visualAuto, nowPlaying, mini, current?.kind, visualReduced, visualMode]);
 
   useEffect(() => {
     if (player.video.current) player.video.current.playbackRate = rate;
@@ -680,7 +735,7 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark">e</div>
           <span>elysium</span>
-          <span className="version-label">0.1</span>
+          <span className="version-label">0.2</span>
         </div>
         <div className="header-menus">
           <details>
@@ -911,7 +966,23 @@ export default function App() {
                 Library
               </button>
             </div>
-            <div className="now-playing-art">
+            {nowPlaying && current?.kind === 'music' && !mini && (
+              <Visualizer
+                player={player}
+                mode={visualMode}
+                quality={visualQuality}
+                reducedMotion={visualReduced}
+                large
+              />
+            )}
+            <div className="visualizer-identity">
+              <span>
+                {VISUALIZER_FAMILIES.find((f) => f.id === getVisualizer(visualMode).family)?.label}
+              </span>
+              <strong>{getVisualizer(visualMode).name}</strong>
+              <small>{playback.playing ? 'LIVE AUDIO' : 'PAUSED · VISUALS FROZEN'}</small>
+            </div>
+            <div className={`now-playing-art ${visualInfo ? '' : 'hidden'}`}>
               <Artwork item={current} />
               <div>
                 <p className="eyebrow">NOW PLAYING</p>
@@ -920,7 +991,6 @@ export default function App() {
                 <small>{current?.album}</small>
               </div>
             </div>
-            <Visualizer player={player} mode={visualMode} large />
           </div>
 
           <div className={`library-content ${nowPlaying && current ? 'covered' : ''}`}>
@@ -1068,10 +1138,37 @@ export default function App() {
                   <label>
                     Visualizer
                     <select value={visualMode} onChange={(e) => setVisualMode(e.target.value)}>
-                      <option value="spectrum">Spectrum</option>
-                      <option value="waveform">Oscilloscope</option>
-                      <option value="ambient">Ambient</option>
+                      <VisualizerOptions />
                     </select>
+                  </label>
+                  <p className="visualizer-note">
+                    Fifteen original effects, including twelve inspired by Windows Media Player,
+                    iTunes, Xbox, and Xbox 360. Choose a song and open Now Playing to watch. The
+                    originals’ plug-ins and assets are not bundled.
+                  </p>
+                  <label>
+                    Visualizer performance
+                    <select
+                      value={visualQuality}
+                      onChange={(e) => setVisualQuality(e.target.value as VisualizerQuality)}
+                    >
+                      <option value="balanced">Balanced · 30 fps</option>
+                      <option value="high">Smooth · 60 fps</option>
+                    </select>
+                  </label>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={visualReduced}
+                      onChange={(e) => setVisualReduced(e.target.checked)}
+                    />
+                    <span>
+                      Reduce visualizer motion
+                      <small>
+                        System reduced-motion preferences are always respected. Automatic preset
+                        changes pause in reduced motion.
+                      </small>
+                    </span>
                   </label>
                   <div className="eq-sliders">
                     {(['low', 'mid', 'high'] as const).map((key) => (
@@ -1120,7 +1217,7 @@ export default function App() {
                   </div>
                 </section>
                 <section>
-                  <h2>Elysium 0.1.0</h2>
+                  <h2>Elysium 0.2.0</h2>
                   <p>An independent music and video player by ooberguts.</p>
                   <button onClick={() => setHelp(true)}>
                     <CircleHelp size={16} />
@@ -1700,7 +1797,7 @@ export default function App() {
           </div>
         </div>
         <div className="footer-visual">
-          <Visualizer player={player} mode={visualMode} />
+          <Visualizer player={player} active={!mini} />
         </div>
         <div className="footer-tools">
           {volumeControls}
@@ -1791,16 +1888,64 @@ export default function App() {
               )}
             </div>
           ) : (
-            <div className="footer-extra-controls">
-              <span>Visualizer</span>
-              <select
-                aria-label="Visualizer preset"
-                value={visualMode}
-                onChange={(e) => setVisualMode(e.target.value)}
+            <div className="footer-extra-controls visualizer-controls">
+              <span className="visualizer-control-label">Visualizer</span>
+              <div className="preset-stepper">
+                <button
+                  className="icon-button"
+                  aria-label="Previous visualizer"
+                  title="Previous visualizer"
+                  onClick={() => setVisualMode(stepVisualizer(visualMode, -1).id)}
+                >
+                  <ChevronLeft size={15} />
+                </button>
+                <select
+                  aria-label="Visualizer preset"
+                  value={visualMode}
+                  onChange={(e) => setVisualMode(e.target.value)}
+                >
+                  <VisualizerOptions />
+                </select>
+                <button
+                  className="icon-button"
+                  aria-label="Next visualizer"
+                  title="Next visualizer"
+                  onClick={() => setVisualMode(stepVisualizer(visualMode, 1).id)}
+                >
+                  <ChevronRight size={15} />
+                </button>
+              </div>
+              <button
+                className="icon-button"
+                aria-label="Random visualizer"
+                title="Random visualizer"
+                onClick={() => setVisualMode(randomVisualizer(visualMode).id)}
               >
-                <option value="spectrum">Spectrum</option>
-                <option value="waveform">Oscilloscope</option>
-                <option value="ambient">Ambient</option>
+                <Sparkles size={15} />
+              </button>
+              <label title="Changes after 30 seconds of visible playback; disabled during reduced motion">
+                <input
+                  type="checkbox"
+                  checked={visualAuto}
+                  onChange={(e) => setVisualAuto(e.target.checked)}
+                />
+                Auto · 30s
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={visualInfo}
+                  onChange={(e) => setVisualInfo(e.target.checked)}
+                />
+                Track info
+              </label>
+              <select
+                aria-label="Visualizer performance"
+                value={visualQuality}
+                onChange={(e) => setVisualQuality(e.target.value as VisualizerQuality)}
+              >
+                <option value="balanced">30 fps</option>
+                <option value="high">60 fps</option>
               </select>
             </div>
           ))}
@@ -1932,7 +2077,7 @@ export default function App() {
       {help && (
         <Modal title="Welcome to Elysium" close={() => setHelp(false)}>
           <div className="help-copy">
-            <p className="eyebrow">VERSION 0.1.0 · TEST RELEASE</p>
+            <p className="eyebrow">VERSION 0.2.0 · TEST RELEASE</p>
             <h3>A new home for your collection.</h3>
             <p>
               Add a folder or try the original sample library. Double-click a song to play it. Use

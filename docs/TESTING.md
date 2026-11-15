@@ -1,4 +1,16 @@
-# Elysium 0.1.0 validation
+# Elysium validation
+
+## 0.2.0 retro visualizers
+
+The frontend suite now has eighteen tests. Nine added checks cover silence, bass/treble assignment at 44.1/48/96 kHz, contiguous waveform sampling (including high notes), transient detection without steady-tone retriggering, envelope timing at 30/60 fps, existing saved mode compatibility, preset navigation, and rotation timing. TypeScript checking, the production build, all ten native tests, and native formatting pass locally on Apple Silicon.
+
+All fifteen presets were selected through the packaged macOS app's bottom control strip during music playback. Native screenshots confirmed the WMP-inspired kaleidoscope, iTunes-inspired ribbon/orbit effects, Xbox-inspired plasma, and Xbox 360-inspired neon ribbons. The playing track advanced across the sample queue without interrupting preset navigation. The stage occupies the available content area and controls remain in the bottom strip. Two paused screenshots had identical visualization-stage pixels; their only differences were in the cursor over the play button.
+
+The final 0.2.0 package restored saved visualizer options after restart. Automatic rotation changed presets across short sample tracks. The track-info toggle hid the overlay, the performance picker selected 60 fps, reduced motion kept spatial animation stationary while responding to audio, and full screen retained the bottom controls. Entering and leaving the mini-player preserved playback and the selected preset. Frame-rate targets are not a hardware performance certification.
+
+Browser rendering checks also exercised the actual React visualizer component and real Web Audio analysis using the original sample music, rather than a simulated audio signal. The temporary browser harness and screenshots live under ignored `artifacts/` and are not bundled into the app.
+
+## 0.1.0 baseline
 
 Native macOS testing was completed on Apple Silicon on November 14, 2026.
 

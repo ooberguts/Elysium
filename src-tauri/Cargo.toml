@@ -1,6 +1,6 @@
 [package]
 name = "elysium"
-version = "0.1.0"
+version = "0.2.0"
 description = "A personal music and video library"
 authors = ["ooberguts"]
 edition = "2021"

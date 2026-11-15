@@ -2,7 +2,7 @@
 
 A personal music and video library built with TypeScript, React, Tauri 2, and Rust. Classic iTunes organization, modern collection views, and an expressive compact player.
 
-**0.1.0 is the first working test release.** The complete product direction is in [ELYSIUM_PLAN.md](ELYSIUM_PLAN.md). The test release implements the everyday local music/video workflow; the plan also describes features that have not shipped yet.
+**0.2.0 adds the retro visualizer collection.** The complete product direction is in [ELYSIUM_PLAN.md](ELYSIUM_PLAN.md). The test release implements the everyday local music/video workflow; the plan also describes features that have not shipped yet.
 
 ## Try the app
 
@@ -23,7 +23,7 @@ The app never moves or deletes your source media. Compatibility conversion creat
 - Local files, external drives, mounted network folders, incremental rescans, scan cancellation, offline retention, and source rebinding.
 - Music and video playback, seek, speed, shuffle, repeat, persistent queue, resume checkpoints, and basic OS Media Session integration.
 - A compact always-on-top player that keeps the same playback session alive when the window changes size.
-- Spectrum, waveform, and ambient displays driven by actual playback audio, with reduced-motion handling and a three-band equalizer.
+- Fifteen audio-reactive visualizers, including twelve original effects inspired by Windows Media Player, iTunes, Xbox, and Xbox 360. Includes a full-stage light show, grouped preset picker, previous/next/random, optional 30-second rotation, track-info overlay, 30/60 fps choices, and a three-band equalizer.
 - Static playlists, drag-to-playlist, four smart playlist rules, M3U/M3U8 import, and M3U8 export.
 - Single and batch metadata editing with a change preview; user overrides survive rescans.
 - MusicBrainz match lookup with a request queue, rate limiting, session cache, and manual acceptance.
@@ -31,6 +31,24 @@ The app never moves or deletes your source media. Compatibility conversion creat
 - Local movie/episode NFO reading and export, local cover/poster artwork, and UTF-8 SRT/WebVTT subtitles.
 - Jellyfin sign-in, up to 5,000 audio/movie/episode items per connection, authenticated direct-play streaming, and progress reporting. Tokens remain in native process memory and sign-out clears the session.
 - JSON library backup and merge restore.
+
+## Retro visualizers
+
+Play a song and choose **Now Playing** (the monitor icon in the bottom player). All visualizer controls are in the expanded bottom strip. Use the grouped preset picker, its left/right arrows, or the sparkle button for a random effect. **Track info** hides or shows the artwork/title overlay. **Auto · 30s** rotates presets during visible music playback; choosing a preset restarts the countdown. The full-screen button expands the app while keeping transport accessible at the bottom.
+
+| Collection                    | Effects                                           |
+| ----------------------------- | ------------------------------------------------- |
+| Windows Media Player inspired | Prismatic Alchemy, Spectral Ocean, Dot Plane      |
+| iTunes inspired               | Classic Light Ribbons, Celestial Orbits, Stardust |
+| Original Xbox inspired        | Emerald Reactor, Liquid Chamber, Verdant Matrix   |
+| Xbox 360 inspired             | Neon Continuum, Infinity Tunnel, Cosmic Bloom     |
+| Elysium essentials            | Spectrum, Oscilloscope, Ambient Glow              |
+
+The renderers use the actual playing audio's waveform, logarithmic frequency bands, bass/mid/treble envelopes, and transient detection. Spatial animation freezes when paused and during silence. Hidden windows stop drawing; the full-stage renderer unmounts when leaving Now Playing or entering the mini-player. Balanced rendering targets 30 fps; Smooth targets 60 fps, subject to hardware and WebView performance. Both cap the canvas resolution on large displays.
+
+**Preferences → Sound & visuals → Reduce visualizer motion** stops spatial animation while retaining a slower response to audio. System reduced-motion preferences are always respected, and automatic preset changes are suspended in reduced motion.
+
+These are original Elysium interpretations of the era, not the original Apple/Microsoft/Llamasoft engines or a pixel-identical emulation. Proprietary visualizer binaries, WMP plug-in DLLs, iTunes plug-ins, Xbox assets, and third-party preset packs are not included. There is no plug-in import in this release.
 
 ## Current limits
 
@@ -65,7 +83,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run package
 ```
 
-Run `npm run prepare:media` before native tests. The native suite exercises real generated media, including MP3/FLAC writing, encoded-audio preservation, recovery, conflict detection, and rescan behavior. Frontend domain tests cover queue transitions, shuffle, search, release grouping, smart rules, and playlist order.
+Run `npm run prepare:media` before native tests. The native suite exercises real generated media, including MP3/FLAC writing, encoded-audio preservation, recovery, conflict detection, and rescan behavior. Frontend tests cover queue transitions, shuffle, search, release grouping, smart rules, playlist order, frequency analysis at three sample rates, silence/transients, frame-rate-independent envelopes, preset compatibility, and rotation timing.
 
 macOS packages are generated under `src-tauri/target/release/bundle/macos` and `bundle/dmg`. Windows NSIS installers are generated under `bundle/nsis`. GitHub Actions builds and tests macOS and Windows, with installer artifacts attached to each run. Tagged versions also attach installers to a release in the same repository.
 

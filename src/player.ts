@@ -61,8 +61,8 @@ export function usePlayer(
       if (!graph.current) {
         const context = new AudioContext(),
           analyser = context.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.8;
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.72;
         const low = context.createBiquadFilter();
         low.type = 'lowshelf';
         low.frequency.value = 200;

@@ -18,4 +18,8 @@ The optional source adapter interoperates with the user's Jellyfin server throug
 
 ## Artwork and sample media
 
-The Elysium icon, generated collection artwork, synthesized sample tracks, and moving color-study sample video were created for this project. No Apple, Microsoft, Spotify, movie-poster, or album-cover assets are bundled. Original Windows Media Player skins and third-party visualization presets are not included in version 0.1.0.
+The Elysium icon, generated collection artwork, synthesized sample tracks, and moving color-study sample video were created for this project. No Apple, Microsoft, Spotify, movie-poster, or album-cover assets are bundled. Original Windows Media Player skins and third-party visualization presets are not included.
+
+## Retro visualizers
+
+The fifteen renderers in `src/visualizers/` are original Elysium code using procedural geometry and color fields. Collection labels describe stylistic inspiration. They do not bundle or execute Windows Media Player, iTunes, Xbox, or Xbox 360 visualizer engines, plug-ins, shaders, preset data, or other proprietary assets. No projectM/MilkDrop preset packs are included. Product names belong to their respective owners; Elysium is an independent project.

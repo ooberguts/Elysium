@@ -23,7 +23,6 @@ import {
 import { artworkUrl, chooseFolder, native, savePath } from './bridge';
 import { seconds } from './domain';
 import type { Match, MediaItem, Playlist, Source } from './types';
-import type { Player } from './player';
 
 export function Artwork({
   item,
@@ -108,107 +107,6 @@ export function Modal({
       </div>
       {children}
     </dialog>
-  );
-}
-
-export function Visualizer({
-  player,
-  mode = 'spectrum',
-  large = false,
-}: {
-  player: Player;
-  mode?: string;
-  large?: boolean;
-}) {
-  const canvas = useRef<HTMLCanvasElement>(null),
-    playing = useRef(player.state.playing);
-  playing.current = player.state.playing;
-  useEffect(() => {
-    const element = canvas.current!;
-    const ctx = element.getContext('2d');
-    if (!ctx) return;
-    let frame = 0,
-      last = 0;
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const resize = () => {
-      const box = element.getBoundingClientRect();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      element.width = box.width * dpr;
-      element.height = box.height * dpr;
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(element);
-    resize();
-    const draw = (time: number) => {
-      frame = requestAnimationFrame(draw);
-      if (document.hidden || time - last < (reduced ? 250 : 33)) return;
-      last = time;
-      const w = element.clientWidth,
-        h = element.clientHeight;
-      ctx.clearRect(0, 0, w, h);
-      const analyser = player.graph.current?.analyser;
-      const data = new Uint8Array(analyser?.frequencyBinCount || 512);
-      if (analyser && playing.current) {
-        if (mode === 'waveform') analyser.getByteTimeDomainData(data);
-        else analyser.getByteFrequencyData(data);
-      }
-      const color =
-        getComputedStyle(element).getPropertyValue('--visual-color').trim() || '#83c8c0';
-      if (mode === 'waveform') {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = large ? 2 : 1.5;
-        ctx.beginPath();
-        for (let i = 0; i < data.length; i++) {
-          const x = (i / (data.length - 1)) * w,
-            y = playing.current && analyser ? (data[i] / 255) * h : h / 2;
-          i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
-        }
-        ctx.stroke();
-      } else if (mode === 'ambient') {
-        const energy = data.reduce((a, b) => a + b, 0) / data.length / 255;
-        const gradient = ctx.createRadialGradient(
-          w * 0.5,
-          h * 0.55,
-          1,
-          w * 0.5,
-          h * 0.55,
-          Math.max(w, h) * (0.25 + energy * 0.3),
-        );
-        gradient.addColorStop(0, color);
-        gradient.addColorStop(1, 'transparent');
-        ctx.globalAlpha = 0.2 + energy * 0.8;
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, w, h);
-        ctx.globalAlpha = 1;
-      } else {
-        const bars = Math.min(80, Math.floor(w / (large ? 10 : 5))),
-          gap = large ? 3 : 2,
-          width = w / bars;
-        for (let i = 0; i < bars; i++) {
-          const bin = Math.floor(Math.pow(i / bars, 1.8) * data.length * 0.7);
-          const value = data[bin] / 255;
-          const height = Math.max(2, value * h * 0.94);
-          ctx.fillStyle = color;
-          ctx.globalAlpha = 0.4 + value * 0.6;
-          ctx.fillRect(i * width, h - height, Math.max(1, width - gap), height);
-        }
-        ctx.globalAlpha = 1;
-      }
-    };
-    frame = requestAnimationFrame(draw);
-    return () => {
-      cancelAnimationFrame(frame);
-      observer.disconnect();
-    };
-  }, [mode, large, player.graph]);
-  return (
-    <canvas
-      ref={canvas}
-      className={`visualizer ${large ? 'large' : ''}`}
-      aria-label={`${mode} audio visualizer`}
-      role="img"
-    />
   );
 }
 
