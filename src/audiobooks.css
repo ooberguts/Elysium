@@ -1,0 +1,181 @@
+.audiobooks-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 34px 36px 40px;
+}
+.audiobooks-view .view-header {
+  padding: 0;
+}
+.audiobooks-view h2 {
+  font-size: 18px;
+  margin: 28px 0 16px;
+  letter-spacing: -0.3px;
+}
+.audiobooks-view h2 small {
+  margin-left: 8px;
+  opacity: 0.5;
+  font-size: 13px;
+}
+.book-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+.book-note svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.book-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 18px;
+}
+.book-card {
+  display: flex;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line-soft);
+  border-radius: 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+.book-cover {
+  width: 112px;
+  height: 154px;
+  flex-shrink: 0;
+  padding: 0;
+  position: relative;
+  border: 0;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 6px 16px #0002;
+}
+.book-cover .artwork {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+.book-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: #0003;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.book-cover:hover .book-play,
+.book-cover:focus-visible .book-play {
+  opacity: 1;
+}
+.book-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+.book-copy h3 {
+  font-size: 15px;
+  line-height: 1.4;
+  margin: 2px 0 6px;
+  overflow-wrap: anywhere;
+}
+.book-copy p,
+.book-copy small {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0 0 8px;
+}
+.book-copy progress {
+  margin-top: auto;
+  height: 4px;
+  width: 100%;
+  accent-color: var(--accent);
+  border: 0;
+  border-radius: 4px;
+}
+.book-progress {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 8px 0 12px;
+}
+.book-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.books-empty {
+  text-align: center;
+  padding: 50px 24px;
+  color: var(--muted);
+}
+.books-empty h3 {
+  color: var(--text);
+  margin: 20px 0 8px;
+}
+.books-empty p {
+  max-width: 400px;
+  margin: 0 auto 24px;
+  line-height: 1.7;
+}
+.books-empty button {
+  margin: auto;
+}
+.book-transport {
+  width: 100%;
+  border-top: 1px solid var(--line-soft);
+  padding-top: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+.book-transport label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+@media (max-width: 1000px) {
+  .audiobooks-view {
+    padding: 24px;
+  }
+  .audiobooks-view .view-header {
+    align-items: flex-start;
+    gap: 18px;
+  }
+  .audiobooks-view .view-header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+.book-cover .art-caption {
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+.book-copy progress::-webkit-progress-bar {
+  background: var(--line-soft);
+  border-radius: 4px;
+}
+.book-copy progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 4px;
+}

@@ -22,7 +22,7 @@ export function artworkUrl(path: string | null): string | undefined {
 export async function chooseFiles(): Promise<string[]> {
   const result = await open({
     multiple: true,
-    title: 'Add music and video',
+    title: 'Add music, audiobooks, and video',
     filters: [
       {
         name: 'Media files',
@@ -30,6 +30,7 @@ export async function chooseFiles(): Promise<string[]> {
           'mp3',
           'flac',
           'm4a',
+          'm4b',
           'aac',
           'alac',
           'wav',

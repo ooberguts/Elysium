@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
+  BookOpen,
   Music2,
   Film,
   Play,
@@ -20,9 +21,9 @@ import {
   WifiOff,
   MonitorPlay,
 } from 'lucide-react';
-import { artworkUrl, chooseFolder, native, savePath } from './bridge';
+import { artworkUrl, chooseFolder } from './bridge';
 import { seconds } from './domain';
-import type { Match, MediaItem, Playlist, Source } from './types';
+import type { MediaItem, Playlist, Source } from './types';
 
 export function Artwork({
   item,
@@ -51,7 +52,15 @@ export function Artwork({
           <div className="art-orbit" />
           <span className="art-caption">{name}</span>
           <span className="art-mark">
-            {item?.kind === 'music' ? <Disc3 /> : item ? <Film /> : <Music2 />}
+            {item?.kind === 'audiobook' ? (
+              <BookOpen />
+            ) : item?.kind === 'music' ? (
+              <Disc3 />
+            ) : item ? (
+              <Film />
+            ) : (
+              <Music2 />
+            )}
           </span>
         </>
       )}
@@ -120,6 +129,9 @@ export function TrackTable({
   info,
   enqueue,
   compact,
+  rate,
+  ratingBusy,
+  contextMenu,
 }: {
   items: MediaItem[];
   selected: Set<string>;
@@ -130,6 +142,9 @@ export function TrackTable({
   info: (item: MediaItem) => void;
   enqueue: (id: string, next?: boolean) => void;
   compact: boolean;
+  rate: (item: MediaItem, rating: number) => void;
+  ratingBusy: ReadonlySet<string>;
+  contextMenu: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -146,6 +161,7 @@ export function TrackTable({
         <span>Name</span>
         <span>Artist</span>
         <span>Album</span>
+        <span>Rating</span>
         <span>Time</span>
         <span />
       </div>
@@ -165,6 +181,11 @@ export function TrackTable({
                 key={item.id}
                 style={{ height: row.size, transform: `translateY(${row.start}px)` }}
                 role="row"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))
+                    contextMenu(item, e);
+                }}
                 aria-selected={selected.has(item.id)}
                 draggable
                 onDragStart={(e) => {
@@ -173,6 +194,7 @@ export function TrackTable({
                 }}
                 onClick={(e) => select(item, e)}
                 onDoubleClick={() => play(item)}
+                onContextMenu={(e) => contextMenu(item, e)}
               >
                 <span role="cell">
                   <button
@@ -192,6 +214,13 @@ export function TrackTable({
                 </span>
                 <span role="cell">{item.artist || 'Unknown artist'}</span>
                 <span role="cell">{item.album || '—'}</span>
+                <span className="track-rating" role="cell">
+                  <Rating
+                    item={item}
+                    rate={(n) => rate(item, n)}
+                    disabled={ratingBusy.has(item.id) || !!item.serverId}
+                  />
+                </span>
                 <span className="tabular" role="cell">
                   {seconds(item.duration)}
                 </span>
@@ -221,7 +250,7 @@ export function TrackTable({
                       </button>
                       <button onClick={() => info(item)}>
                         <Info size={14} />
-                        Get Info
+                        Edit metadata
                       </button>
                     </div>
                   </details>
@@ -246,17 +275,26 @@ export function MediaCards({
   items,
   play,
   detail,
+  contextMenu,
   television = false,
 }: {
   items: MediaItem[];
   play: (item: MediaItem) => void;
   detail: (item: MediaItem) => void;
+  contextMenu?: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
   television?: boolean;
 }) {
   return (
     <div className={`media-grid ${television ? 'episode-grid' : ''}`}>
       {items.map((item) => (
-        <article className="media-card" key={item.id}>
+        <article
+          className="media-card"
+          key={item.id}
+          onContextMenu={(e) => contextMenu?.(item, e)}
+          onKeyDown={(e) => {
+            if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) contextMenu?.(item, e);
+          }}
+        >
           <button
             className="cover-button"
             onClick={() => detail(item)}
@@ -298,317 +336,18 @@ export function MediaCards({
   );
 }
 
-const fields = [
-  ['title', 'Title'],
-  ['artist', 'Artist'],
-  ['album', 'Album'],
-  ['albumArtist', 'Album artist'],
-  ['genre', 'Genre'],
-  ['year', 'Year'],
-  ['track', 'Track'],
-  ['disc', 'Disc'],
-] as const;
-export function MetadataDialog({
-  items,
-  close,
-  changed,
-  notify,
-  activeId,
-}: {
-  items: MediaItem[];
-  close: () => void;
-  changed: () => Promise<void>;
-  notify: (message: string) => void;
-  activeId: string | null;
-}) {
-  const [changes, setChanges] = useState<Record<string, string>>({}),
-    [write, setWrite] = useState(false),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(''),
-    [matches, setMatches] = useState<Match[] | null>(null),
-    [lookup, setLookup] = useState(false),
-    [tab, setTab] = useState('details');
-  const item = items[0],
-    single = items.length === 1,
-    video = item.kind !== 'music',
-    remote = items.some((i) => i.serverId);
-  const fieldValue = (key: string) => {
-    const values = new Set(
-      items.map((i) => String((i as unknown as Record<string, unknown>)[key] ?? '')),
-    );
-    return values.size === 1 ? [...values][0] : '';
-  };
-  const value = (key: string) => changes[key] ?? fieldValue(key);
-  const update = (key: string, value: string) => setChanges((prev) => ({ ...prev, [key]: value }));
-  async function submit(e: FormEvent) {
-    e.preventDefault();
-    if (!Object.keys(changes).length) return;
-    if (write && items.some((i) => i.id === activeId)) {
-      setError(
-        'Stop or switch away from this item before writing its file tags. Library-only changes can be saved during playback.',
-      );
-      return;
-    }
-    setBusy(true);
-    setError('');
-    try {
-      const result = await native<{ saved: number; errors: string[] }>('update_metadata', {
-        ids: items.map((i) => i.id),
-        changes,
-        writeFiles: write,
-      });
-      await changed();
-      if (result.errors.length) setError(`${result.saved} saved. ${result.errors.join('\n')}`);
-      else {
-        notify(
-          `${result.saved} ${result.saved === 1 ? 'item' : 'items'} updated${write ? ' · original file backed up' : ''}`,
-        );
-        close();
-      }
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  async function find() {
-    setLookup(true);
-    setError('');
-    try {
-      setMatches(
-        await native<Match[]>('find_metadata', { title: value('title'), artist: value('artist') }),
-      );
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLookup(false);
-    }
-  }
-  async function nfo() {
-    const path = await savePath(`${item.title}.nfo`, 'nfo');
-    if (path) {
-      await native('export_nfo', { id: item.id, path });
-      notify('NFO sidecar exported');
-    }
-  }
-  return (
-    <Modal title={single ? 'Get Info' : `Edit ${items.length} items`} close={close} wide>
-      <form onSubmit={submit}>
-        <div className="info-overview">
-          <Artwork item={item} />
-          <div>
-            <h3>{single ? item.title : `${items.length} selected items`}</h3>
-            <p>
-              {single
-                ? item.artist || item.series || item.format
-                : 'Only fields you change will be applied.'}
-            </p>
-            <small>
-              {single
-                ? `${item.format} · ${seconds(item.duration)}${item.sampleRate ? ` · ${item.sampleRate / 1000} kHz` : ''}`
-                : 'Mixed values appear blank.'}
-            </small>
-          </div>
-        </div>
-        <div className="segmented">
-          <button
-            type="button"
-            className={tab === 'details' ? 'active' : ''}
-            onClick={() => setTab('details')}
-          >
-            Details
-          </button>
-          <button
-            type="button"
-            className={tab === 'source' ? 'active' : ''}
-            onClick={() => setTab('source')}
-          >
-            Source & recovery
-          </button>
-        </div>
-        {tab === 'details' ? (
-          <>
-            <div className="form-grid">
-              {(video
-                ? [
-                    ['title', 'Title'],
-                    ['series', 'Series'],
-                    ['season', 'Season'],
-                    ['episode', 'Episode'],
-                    ['genre', 'Genre'],
-                    ['year', 'Year'],
-                  ]
-                : fields
-              ).map(([key, label]) => (
-                <label key={key}>
-                  {label}
-                  <input
-                    value={value(key)}
-                    placeholder={!single && !fieldValue(key) ? 'Mixed values' : ''}
-                    type={['track', 'disc', 'season', 'episode'].includes(key) ? 'number' : 'text'}
-                    min="0"
-                    onChange={(e) => update(key, e.target.value)}
-                    disabled={remote}
-                  />
-                </label>
-              ))}
-              {video && (
-                <label className="full-span">
-                  Overview
-                  <textarea
-                    rows={3}
-                    value={value('overview')}
-                    onChange={(e) => update('overview', e.target.value)}
-                    disabled={remote}
-                  />
-                </label>
-              )}
-            </div>
-            {single && !video && !remote && (
-              <button
-                type="button"
-                className="lookup-button"
-                disabled={lookup}
-                onClick={() => void find()}
-              >
-                {lookup ? <LoaderCircle className="spin" size={15} /> : <Search size={15} />}Find
-                matches on MusicBrainz
-              </button>
-            )}
-            {matches && (
-              <div className="match-list">
-                {!matches.length && (
-                  <p>No matches found. Try editing the title or artist before searching again.</p>
-                )}
-                {matches.map((match) => (
-                  <button
-                    type="button"
-                    key={match.id}
-                    onClick={() => {
-                      setChanges((prev) => ({
-                        ...prev,
-                        title: match.title,
-                        artist: match.artist,
-                        ...(match.album ? { album: match.album } : {}),
-                        ...(match.year ? { year: match.year } : {}),
-                      }));
-                      setMatches(null);
-                    }}
-                  >
-                    <span>
-                      <strong>{match.title}</strong>
-                      <small>
-                        {match.artist} · {match.album || 'Release not identified'} {match.year}
-                      </small>
-                    </span>
-                    <span>{match.score}%</span>
-                  </button>
-                ))}
-              </div>
-            )}
-            {!remote && !video && (
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={write}
-                  onChange={(e) => setWrite(e.target.checked)}
-                  disabled={items.some((i) => !['MP3', 'FLAC'].includes(i.format))}
-                />
-                <span>
-                  Also write MP3 / FLAC file tags
-                  <small>Creates a backup and verifies that the audio is unchanged.</small>
-                </span>
-              </label>
-            )}
-            {!write && !remote && (
-              <p className="form-note">Changes are saved in Elysium and protected from rescans.</p>
-            )}
-            {remote && (
-              <p className="notice">
-                This item is managed by Jellyfin. Edit its metadata on your server.
-              </p>
-            )}
-          </>
-        ) : (
-          <div className="source-information">
-            <p className="file-path">{item.path}</p>
-            <p>
-              {Object.keys(item.overrides).length
-                ? `${Object.keys(item.overrides).length} library overrides are protected from rescans.`
-                : 'Information comes from embedded tags, local sidecars, or the filename.'}
-            </p>
-            {single && !remote && (
-              <button
-                type="button"
-                onClick={async () => {
-                  setBusy(true);
-                  try {
-                    await native('restore_tags', { id: item.id });
-                    await changed();
-                    notify('Original file tags restored');
-                    close();
-                  } catch (e) {
-                    setError(String(e));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                Restore last embedded-tag backup
-              </button>
-            )}
-            {single && video && !remote && (
-              <button type="button" onClick={() => void nfo().catch((e) => setError(String(e)))}>
-                Export Kodi NFO sidecar
-              </button>
-            )}
-          </div>
-        )}
-        {Object.keys(changes).length > 0 && (
-          <div className="change-preview">
-            <strong>Changes to save</strong>
-            {Object.entries(changes).map(([key, next]) => (
-              <div key={key}>
-                <span>{key}</span>
-                <span>{fieldValue(key) || '—'}</span>
-                <span>→</span>
-                <strong>{next || '(empty)'}</strong>
-              </div>
-            ))}
-          </div>
-        )}
-        {error && (
-          <p className="error-message" role="alert">
-            {error}
-          </p>
-        )}
-        <div className="dialog-actions">
-          <button type="button" onClick={close}>
-            Cancel
-          </button>
-          <button
-            className="primary"
-            type="submit"
-            disabled={busy || remote || !Object.keys(changes).length}
-          >
-            {busy ? 'Saving…' : 'Save changes'}
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
-
 export function AddSourceDialog({
+  initialKind = 'mixed',
   close,
   add,
 }: {
   close: () => void;
   add: (path: string, kind: string, name: string) => Promise<void>;
+  initialKind?: string;
 }) {
   const [path, setPath] = useState(''),
     [name, setName] = useState(''),
-    [kind, setKind] = useState('mixed'),
+    [kind, setKind] = useState(initialKind),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   return (
@@ -665,6 +404,7 @@ export function AddSourceDialog({
           <select value={kind} onChange={(e) => setKind(e.target.value)}>
             <option value="mixed">Music, movies, and TV</option>
             <option value="music">Music</option>
+            <option value="audiobook">Audiobooks</option>
             <option value="movie">Movies</option>
             <option value="tv">TV shows</option>
           </select>
@@ -875,14 +615,33 @@ export function VideoDetail({
   );
 }
 
-export function Rating({ item, rate }: { item: MediaItem; rate: (rating: number) => void }) {
+export function Rating({
+  item,
+  rate,
+  disabled = false,
+}: {
+  item: MediaItem;
+  rate: (rating: number) => void;
+  disabled?: boolean;
+}) {
   return (
-    <div className="rating" aria-label={`Rated ${item.rating} out of 5 stars`}>
+    <div
+      className="rating"
+      role="group"
+      aria-label={`${item.title}: ${item.rating ? `${item.rating} of 5 stars` : 'Unrated'}`}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onDragStart={(e) => e.preventDefault()}
+    >
       {[1, 2, 3, 4, 5].map((n) => (
         <button
+          type="button"
           key={n}
           className="icon-button"
-          aria-label={`Rate ${n} stars`}
+          disabled={disabled}
+          aria-label={`Rate ${item.title} ${n} ${n === 1 ? 'star' : 'stars'}`}
+          aria-pressed={item.rating === n}
+          title={item.rating === n ? 'Click again to clear this rating' : `${n} of 5 stars`}
           onClick={() => rate(item.rating === n ? 0 : n)}
         >
           <Star size={16} fill={n <= item.rating ? 'currentColor' : 'none'} />

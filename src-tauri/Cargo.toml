@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "A personal music and video library"
 authors = ["ooberguts"]
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.85"
 
 [lib]
 name = "elysium_lib"
@@ -29,6 +29,10 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio = { version = "1", features = ["time", "sync"] }
 tempfile = "3"
 percent-encoding = "2"
+cpal = "=0.18.2"
+rustfft = "6"
+mdns-sd = "=0.21.6"
+if-addrs = "0.15"
 
 [dev-dependencies]
 tempfile = "3"

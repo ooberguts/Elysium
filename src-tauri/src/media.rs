@@ -17,8 +17,8 @@ use std::{
 use tauri::Emitter;
 
 pub const AUDIO: &[&str] = &[
-    "mp3", "flac", "m4a", "aac", "alac", "wav", "wave", "aif", "aiff", "ogg", "oga", "opus", "wma",
-    "ape", "wv",
+    "mp3", "flac", "m4a", "m4b", "aac", "alac", "wav", "wave", "aif", "aiff", "ogg", "oga", "opus",
+    "wma", "ape", "wv",
 ];
 pub const VIDEO: &[&str] = &[
     "mp4", "m4v", "mkv", "mov", "webm", "avi", "wmv", "mpg", "mpeg", "ts", "m2ts", "ogv",
@@ -122,7 +122,11 @@ fn read_media_inner(
         .replace('_', " ");
     let (series, season, episode) = parse_episode(&stem);
     let kind = if AUDIO.contains(&ext.as_str()) {
-        "music"
+        if ext == "m4b" || source.is_some_and(|s| s.kind == "audiobook") {
+            "audiobook"
+        } else {
+            "music"
+        }
     } else if source.is_some_and(|s| s.kind == "tv") || episode > 0 {
         "tv"
     } else {
@@ -153,6 +157,7 @@ fn read_media_inner(
         added_at: now(),
         last_played: 0,
         resume: 0.0,
+        progress_updated_at: 0,
         watched: false,
         available: true,
         series,
@@ -161,7 +166,7 @@ fn read_media_inner(
         overview: String::new(),
         overrides: HashMap::new(),
     };
-    if kind == "music" {
+    if kind == "music" || kind == "audiobook" {
         if let Ok(tagged) = lofty::read_from_path(&canonical) {
             item.duration = tagged.properties().duration().as_secs_f64();
             item.sample_rate = tagged.properties().sample_rate().unwrap_or(0);
@@ -170,6 +175,7 @@ fn read_media_inner(
                 if let Some(v) = tag.title() {
                     item.title = v.to_string();
                 }
+                item.rating = crate::ratings::read(tag).unwrap_or(0);
                 item.artist = tag.artist().map(|x| x.to_string()).unwrap_or_default();
                 item.album = tag.album().map(|x| x.to_string()).unwrap_or_default();
                 item.genre = tag.genre().map(|x| x.to_string()).unwrap_or_default();
@@ -180,7 +186,12 @@ fn read_media_inner(
                     .get_string(&lofty::tag::ItemKey::AlbumArtist)
                     .unwrap_or("")
                     .to_owned();
-                if let Some(picture) = tag.pictures().first() {
+                if let Some(picture) = tag
+                    .pictures()
+                    .iter()
+                    .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
+                    .or_else(|| tag.pictures().first())
+                {
                     if picture.data().len() < 12_000_000 {
                         let art_path = store
                             .data_dir
@@ -271,12 +282,18 @@ fn read_media_inner(
                 item.source_id = existing.source_id;
                 item.relative_path = existing.relative_path;
             }
+            if existing.kind == "audiobook" {
+                item.kind = existing.kind;
+            }
             item.favorite = existing.favorite;
-            item.rating = existing.rating;
+            if existing.rating > 0 || existing.overrides.contains_key("rating") {
+                item.rating = existing.rating;
+            }
             item.play_count = existing.play_count;
             item.added_at = existing.added_at;
             item.last_played = existing.last_played;
             item.resume = existing.resume;
+            item.progress_updated_at = existing.progress_updated_at;
             item.watched = existing.watched;
             item.overrides = existing.overrides;
             apply_overrides(&mut item);
@@ -290,6 +307,8 @@ pub fn apply_overrides(item: &mut MediaItem) {
     for (key, value) in item.overrides.clone() {
         match key.as_str() {
             "title" => item.title = value,
+            "rating" => item.rating = value.parse::<u8>().unwrap_or(0).min(5),
+            "artwork" => item.artwork = if value.is_empty() { None } else { Some(value) },
             "artist" => item.artist = value,
             "album" => item.album = value,
             "albumArtist" => item.album_artist = value,
@@ -409,7 +428,11 @@ pub fn compatible_copy(store: &Store, id: &str) -> Result<String, String> {
         meta.len(),
         meta.modified().ok()
     ));
-    let ext = if item.kind == "music" { "m4a" } else { "mp4" };
+    let ext = if item.kind == "music" || item.kind == "audiobook" {
+        "m4a"
+    } else {
+        "mp4"
+    };
     let target = store
         .data_dir
         .join("compatible")
@@ -424,7 +447,7 @@ pub fn compatible_copy(store: &Store, id: &str) -> Result<String, String> {
     let mut cmd = hidden_command(&store.ffmpeg);
     cmd.args(["-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i"])
         .arg(path);
-    if item.kind == "music" {
+    if item.kind == "music" || item.kind == "audiobook" {
         cmd.args(["-vn", "-c:a", "aac", "-b:a", "256k"]);
     } else {
         cmd.args([
@@ -547,5 +570,55 @@ mod tests {
         assert_eq!(imported.relative_path, "track.mp3");
         store.save_item(&imported).unwrap();
         assert_eq!(store.library().unwrap().items.len(), 1);
+    }
+    #[test]
+    fn audiobook_resume_survives_rescan_and_database_reopen() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("book.mp3");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/demo/01 - Glass Horizon.mp3"),
+            &path,
+        )
+        .unwrap();
+        let data = temp.path().join("data");
+        let id;
+        {
+            let store = Store::new(data.clone(), std::path::PathBuf::new()).unwrap();
+            let source = Source {
+                id: "books".into(),
+                name: "Books".into(),
+                path: temp.path().to_string_lossy().into_owned(),
+                kind: "audiobook".into(),
+                online: true,
+                scanned_at: 0,
+                count: 0,
+            };
+            let item = read_media(&store, &path, Some(&source)).unwrap();
+            assert_eq!(item.kind, "audiobook");
+            assert!(item.duration > 0.);
+            id = item.id.clone();
+            store.save_item(&item).unwrap();
+            store
+                .update_progress(&id, 7.25, item.duration, false, true)
+                .unwrap();
+            let rescanned = read_media(&store, &path, None).unwrap();
+            assert_eq!(rescanned.kind, "audiobook");
+            assert_eq!(rescanned.resume, 7.25);
+            store.save_item(&rescanned).unwrap();
+        }
+        let store = Store::new(data, std::path::PathBuf::new()).unwrap();
+        assert_eq!(store.item(&id).unwrap().resume, 7.25);
+        store.update_progress(&id, 3.5, 16., false, false).unwrap();
+        assert_eq!(store.item(&id).unwrap().resume, 3.5);
+        store.update_progress(&id, 16., 16., true, false).unwrap();
+        let item = store.item(&id).unwrap();
+        assert!(item.watched);
+        assert_eq!(item.resume, 0.);
+        assert!(store
+            .update_progress(&id, f64::NAN, 16., false, false)
+            .is_err());
+        let m4b = temp.path().join("recognized.m4b");
+        std::fs::write(&m4b, []).unwrap();
+        assert_eq!(read_media(&store, &m4b, None).unwrap().kind, "audiobook");
     }
 }

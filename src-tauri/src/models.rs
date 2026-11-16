@@ -28,6 +28,8 @@ pub struct MediaItem {
     pub added_at: u64,
     pub last_played: u64,
     pub resume: f64,
+    #[serde(default)]
+    pub progress_updated_at: u64,
     pub watched: bool,
     pub available: bool,
     pub series: String,

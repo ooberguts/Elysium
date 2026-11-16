@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { mediaUrl, native } from './bridge';
-import { nextIndex, shuffled } from './domain';
+import { isAudio, nextIndex, shuffled } from './domain';
+import { checkpoint, resumePosition } from './listening';
 import type { MediaItem, PlayerState } from './types';
 
 const initial: PlayerState = {
@@ -42,6 +43,8 @@ export function usePlayer(
     generation = useRef(0),
     prepared = useRef(false),
     startAt = useRef<number | null>(null);
+  const loadedMedia = useRef<{ item: MediaItem; media: HTMLMediaElement } | null>(null);
+  const writes = useRef<Promise<unknown>>(Promise.resolve());
   const stateRef = useRef(state),
     itemsRef = useRef(items),
     currentRef = useRef<MediaItem | undefined>(undefined),
@@ -52,7 +55,7 @@ export function usePlayer(
   const current = items.find((i) => i.id === state.currentId);
   currentRef.current = current;
   const element = useCallback(
-    () => (currentRef.current?.kind === 'music' ? audio.current : video.current),
+    () => (currentRef.current && isAudio(currentRef.current) ? audio.current : video.current),
     [],
   );
 
@@ -62,7 +65,10 @@ export function usePlayer(
         const context = new AudioContext(),
           analyser = context.createAnalyser();
         analyser.fftSize = 2048;
-        analyser.smoothingTimeConstant = 0.72;
+        // The visualizer owns attack/release and phrase envelopes; preserve transients here.
+        analyser.smoothingTimeConstant = 0.2;
+        analyser.minDecibels = -90;
+        analyser.maxDecibels = -15;
         const low = context.createBiquadFilter();
         low.type = 'lowshelf';
         low.frequency.value = 200;
@@ -106,12 +112,13 @@ export function usePlayer(
 
   const persistProgress = useCallback(
     async (completed = false, forceCount = false) => {
-      const item = currentRef.current,
-        media = element();
-      if (!item || !media) return;
+      const active = loadedMedia.current;
+      if (!active || active.media.readyState === 0) return;
+      const { item, media } = active;
       const pos = media.currentTime || 0,
         duration = Number.isFinite(media.duration) ? media.duration : item.duration;
       const done = completed || media.ended;
+      checkpoint(item, pos, done);
       const countPlay = !counted.current && (forceCount || pos >= Math.min(30, duration / 2));
       if (countPlay) counted.current = true;
       try {
@@ -124,13 +131,17 @@ export function usePlayer(
             stopped: done,
           });
         else
-          await native('update_progress', {
-            id: item.id,
-            position: pos,
-            duration,
-            completed: done,
-            countPlay,
-          });
+          await (writes.current = writes.current
+            .catch(() => {})
+            .then(() =>
+              native('update_progress', {
+                id: item.id,
+                position: pos,
+                duration,
+                completed: done,
+                countPlay,
+              }),
+            ));
         if (countPlay || done) progressCallback.current();
       } catch {
         /* Local playback continues through temporary server failures. */
@@ -142,6 +153,7 @@ export function usePlayer(
   useEffect(() => {
     const item = itemsRef.current.find((i) => i.id === state.currentId);
     const token = ++generation.current;
+    loadedMedia.current = null;
     for (const media of [audio.current, video.current]) {
       media?.pause();
       media?.removeAttribute('src');
@@ -153,18 +165,22 @@ export function usePlayer(
     prepared.current = false;
     lastSave.current = 0;
     if (!item) return;
-    const chosen = item.kind === 'music' ? audio.current : video.current;
+    const chosen = isAudio(item) ? audio.current : video.current;
     if (!chosen) return;
     const media = chosen;
     set((s) => ({ ...s, position: 0, duration: item.duration }));
-    const resume = startAt.current ?? (item.kind !== 'music' ? item.resume : 0);
+    const resume = resumePosition(item, startAt.current);
     startAt.current = null;
     let loaded = false;
     const start = async () => {
       if (loaded || token !== generation.current) return;
       loaded = true;
-      if (resume > 0 && resume < media.duration - 2)
-        media.currentTime = Math.max(0, resume - (item.kind === 'music' ? 0 : 2));
+      if (resume > 0 && resume < media.duration)
+        media.currentTime = Math.max(
+          0,
+          resume - (item.kind === 'audiobook' || item.kind === 'music' ? 0 : 2),
+        );
+      loadedMedia.current = { item, media };
       set((s) => ({
         ...s,
         duration: Number.isFinite(media.duration) ? media.duration : item.duration,
@@ -188,7 +204,9 @@ export function usePlayer(
       let url = mediaUrl(item!);
       if (
         !item!.serverId &&
-        !['MP3', 'WAV', 'WAVE', 'M4A', 'AAC', 'FLAC', 'MP4', 'M4V', 'MOV'].includes(item!.format)
+        !['MP3', 'WAV', 'WAVE', 'M4A', 'M4B', 'AAC', 'FLAC', 'MP4', 'M4V', 'MOV'].includes(
+          item!.format,
+        )
       ) {
         setPreparing(true);
         prepared.current = true;
@@ -217,13 +235,23 @@ export function usePlayer(
   useEffect(() => {
     const tick = () => {
       const media = element();
-      if (!media || !currentRef.current) return;
+      if (
+        !media ||
+        !currentRef.current ||
+        loadedMedia.current?.media !== media ||
+        loadedMedia.current.item.id !== currentRef.current.id
+      )
+        return;
+      checkpoint(currentRef.current, media.currentTime, media.ended);
       set((s) => ({
         ...s,
         position: media.currentTime || 0,
         duration: Number.isFinite(media.duration) ? media.duration : s.duration,
       }));
-      if (media.currentTime - lastSave.current > 5 || media.currentTime < lastSave.current) {
+      if (
+        media.currentTime - lastSave.current > (currentRef.current.kind === 'audiobook' ? 2 : 5) ||
+        media.currentTime < lastSave.current
+      ) {
         lastSave.current = media.currentTime;
         void persistProgress();
       }
@@ -236,6 +264,7 @@ export function usePlayer(
       const active = element();
       if (
         active &&
+        loadedMedia.current?.media === active &&
         event.target === active &&
         active.readyState > 0 &&
         active.paused &&
@@ -317,6 +346,18 @@ export function usePlayer(
     };
   }, [element, enableAudio, persistProgress]);
 
+  useEffect(() => {
+    const save = () => {
+      void persistProgress();
+    };
+    window.addEventListener('pagehide', save);
+    document.addEventListener('visibilitychange', save);
+    return () => {
+      window.removeEventListener('pagehide', save);
+      document.removeEventListener('visibilitychange', save);
+    };
+  }, [persistProgress]);
+
   const play = useCallback(
     async (item: MediaItem, collection: MediaItem[] = [item]) => {
       if (!item.available) {
@@ -378,10 +419,12 @@ export function usePlayer(
           0,
           Math.min(position, Number.isFinite(media.duration) ? media.duration : position),
         );
+        if (currentRef.current) checkpoint(currentRef.current, media.currentTime);
+        void persistProgress();
         set((s) => ({ ...s, position: media.currentTime }));
       }
     },
-    [element],
+    [element, persistProgress],
   );
   const enqueue = useCallback(
     (id: string, next = false) => {
@@ -464,6 +507,10 @@ export function usePlayer(
     await native('cancel_conversion').catch(() => {});
     set((s) => ({ ...s, currentId: null, playing: false, position: 0, duration: 0 }));
   }, [persistProgress]);
+  const pause = useCallback(() => {
+    element()?.pause();
+    set((s) => ({ ...s, playing: false }));
+  }, [element]);
   return {
     state,
     set,
@@ -478,6 +525,7 @@ export function usePlayer(
     element,
     play,
     toggle,
+    pause,
     go,
     seek,
     enqueue,

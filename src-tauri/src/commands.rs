@@ -26,7 +26,7 @@ pub async fn add_source(
     app: tauri::AppHandle,
     store: State<'_, Arc<Store>>,
 ) -> Result<Source, String> {
-    if !["mixed", "music", "movie", "tv"].contains(&kind.as_str()) {
+    if !["mixed", "music", "movie", "tv", "audiobook"].contains(&kind.as_str()) {
         return Err("Choose a library type".into());
     }
     let s = store.inner().clone();
@@ -107,9 +107,13 @@ pub fn cancel_conversion(store: State<'_, Arc<Store>>) {
 #[tauri::command]
 pub async fn import_files(
     paths: Vec<String>,
+    kind: Option<String>,
     app: tauri::AppHandle,
     store: State<'_, Arc<Store>>,
 ) -> Result<usize, String> {
+    if kind.as_deref().is_some_and(|k| k != "audiobook") {
+        return Err("Invalid import type".into());
+    }
     if paths.len() > 10_000 {
         return Err("Import up to 10,000 files at a time, or add a folder".into());
     }
@@ -119,7 +123,14 @@ pub async fn import_files(
         let mut errors = 0;
         for path in paths {
             match media::read_media(&s, Path::new(&path), None) {
-                Ok(item) => {
+                Ok(mut item) => {
+                    if kind.as_deref() == Some("audiobook") {
+                        if item.kind != "music" && item.kind != "audiobook" {
+                            errors += 1;
+                            continue;
+                        }
+                        item.kind = "audiobook".into();
+                    }
                     app.asset_protocol_scope()
                         .allow_file(&item.path)
                         .map_err(err)?;
@@ -224,16 +235,30 @@ pub fn set_favorite(
     favorite: bool,
     store: State<'_, Arc<Store>>,
 ) -> Result<(), String> {
-    let mut item = store.item(&id)?;
-    item.favorite = favorite;
-    store.save_item(&item)
+    store.change_item(&id, |item| item.favorite = favorite)?;
+    Ok(())
 }
 
 #[tauri::command]
-pub fn set_rating(id: String, rating: u8, store: State<'_, Arc<Store>>) -> Result<(), String> {
-    let mut item = store.item(&id)?;
-    item.rating = rating.min(5);
-    store.save_item(&item)
+pub async fn set_rating(
+    id: String,
+    rating: u8,
+    store: State<'_, Arc<Store>>,
+) -> Result<metadata::RatingResult, String> {
+    let s = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || metadata::set_rating(&s, &id, rating))
+        .await
+        .map_err(err)?
+}
+
+#[tauri::command]
+pub async fn prepare_cover(path: String, store: State<'_, Arc<Store>>) -> Result<String, String> {
+    let s = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        metadata::prepare_cover(&s, std::path::Path::new(&path))
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]
@@ -245,72 +270,31 @@ pub fn update_progress(
     count_play: bool,
     store: State<'_, Arc<Store>>,
 ) -> Result<(), String> {
-    if !position.is_finite() || !duration.is_finite() {
-        return Err("Invalid playback time".into());
-    }
-    let mut item = store.item(&id)?;
-    if duration > 0.0 {
-        item.duration = duration;
-    }
-    item.resume = if completed {
-        0.0
-    } else {
-        position.max(0.0).min(item.duration.max(position))
-    };
-    if count_play {
-        item.play_count = item.play_count.saturating_add(1);
-        item.last_played = now();
-    }
-    if completed && item.kind != "music" {
-        item.watched = true;
-    }
-    store.save_item(&item)
+    store.update_progress(&id, position, duration, completed, count_play)
 }
 
 #[tauri::command]
 pub fn set_watched(id: String, watched: bool, store: State<'_, Arc<Store>>) -> Result<(), String> {
-    let mut item = store.item(&id)?;
-    item.watched = watched;
-    if watched {
-        item.resume = 0.0;
-    }
-    store.save_item(&item)
+    store.change_item(&id, |item| {
+        item.watched = watched;
+        if watched {
+            item.resume = 0.0;
+        }
+    })?;
+    Ok(())
 }
 
-#[derive(serde::Serialize)]
-pub struct EditResult {
-    pub saved: usize,
-    pub errors: Vec<String>,
-}
 #[tauri::command]
 pub async fn update_metadata(
     ids: Vec<String>,
     changes: HashMap<String, String>,
     write_files: bool,
     store: State<'_, Arc<Store>>,
-) -> Result<EditResult, String> {
-    if ids.len() > 1000 {
-        return Err("Edit up to 1,000 files at a time".into());
-    }
+) -> Result<metadata::EditResult, String> {
     let s = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut result = EditResult {
-            saved: 0,
-            errors: vec![],
-        };
-        for id in ids {
-            match metadata::edit(&s, &id, changes.clone(), write_files) {
-                Ok(_) => result.saved += 1,
-                Err(e) => result.errors.push(format!(
-                    "{}: {e}",
-                    s.item(&id).map(|i| i.title).unwrap_or(id)
-                )),
-            }
-        }
-        Ok(result)
-    })
-    .await
-    .map_err(err)?
+    tauri::async_runtime::spawn_blocking(move || metadata::edit_many(&s, ids, changes, write_files))
+        .await
+        .map_err(err)?
 }
 
 #[tauri::command]

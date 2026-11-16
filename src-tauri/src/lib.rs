@@ -1,7 +1,10 @@
+mod broadcast;
+mod capture;
 mod commands;
 mod media;
 mod metadata;
 mod models;
+mod ratings;
 mod remote;
 mod store;
 
@@ -15,8 +18,16 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(remote)
+        .manage(capture::CaptureState::default())
+        .manage(broadcast::BroadcastState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                if let Some(broadcast) = window.try_state::<broadcast::BroadcastState>() {
+                    broadcast.shutdown();
+                }
+                if let Some(capture) = window.try_state::<capture::CaptureState>() {
+                    capture.stop(None);
+                }
                 if let Some(store) = window.try_state::<Arc<store::Store>>() {
                     store.stop_conversion();
                     store
@@ -78,6 +89,24 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            broadcast::broadcast_status,
+            broadcast::broadcast_activity,
+            broadcast::broadcast_pause_room,
+            broadcast::broadcast_outputs,
+            broadcast::broadcast_enable,
+            broadcast::broadcast_disable,
+            broadcast::broadcast_settings,
+            broadcast::broadcast_start,
+            broadcast::broadcast_stop,
+            broadcast::broadcast_next,
+            broadcast::broadcast_join,
+            broadcast::broadcast_leave,
+            broadcast::broadcast_remove_listener,
+            broadcast::broadcast_invite,
+            broadcast::broadcast_answer_invite,
+            capture::list_audio_devices,
+            capture::start_audio_capture,
+            capture::stop_audio_capture,
             commands::get_library,
             commands::add_source,
             commands::scan_source,
@@ -90,6 +119,7 @@ pub fn run() {
             commands::update_progress,
             commands::set_watched,
             commands::update_metadata,
+            commands::prepare_cover,
             commands::restore_tags,
             commands::prepare_playback,
             commands::cancel_conversion,

@@ -23,3 +23,15 @@ The Elysium icon, generated collection artwork, synthesized sample tracks, and m
 ## Retro visualizers
 
 The fifteen renderers in `src/visualizers/` are original Elysium code using procedural geometry and color fields. Collection labels describe stylistic inspiration. They do not bundle or execute Windows Media Player, iTunes, Xbox, or Xbox 360 visualizer engines, plug-ins, shaders, preset data, or other proprietary assets. No projectM/MilkDrop preset packs are included. Product names belong to their respective owners; Elysium is an independent project.
+
+## Native audio visualization
+
+Audio-device enumeration and capture use [CPAL](https://github.com/RustAudio/cpal) 0.18.2 under Apache-2.0. Frequency analysis uses [RustFFT](https://github.com/ejmahler/RustFFT) under MIT OR Apache-2.0. Exact transitive versions are recorded in `src-tauri/Cargo.lock`. These components process live samples locally; no audio recording service or virtual audio driver is bundled.
+
+## LAN radio
+
+LAN discovery uses [mdns-sd](https://github.com/keepsimple1/mdns-sd) 0.21.6 under Apache-2.0 OR MIT. Interface enumeration uses [if-addrs](https://github.com/messense/if-addrs) under MIT OR BSD-3-Clause. Audio output uses CPAL and local-file decoding uses the already bundled FFmpeg helper. The timestamped PCM protocol, clock estimator, playback timeline, and room controls are original Elysium code. [Snapcast](https://github.com/snapcast/snapcast) was an architectural reference; no Snapcast implementation or protocol code was imported.
+
+## Adaptive LAN video
+
+Video playback uses [hls.js](https://github.com/video-dev/hls.js) 1.7.4 under Apache-2.0 (license in `node_modules/hls.js/LICENSE`). It is loaded only when opening the video stage. The bundled FFmpeg creates aligned H.264 fragmented-MP4 variants; native PCM retains the room audio clock. No remote media service is bundled.

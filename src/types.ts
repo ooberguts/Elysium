@@ -1,6 +1,7 @@
-export type MediaKind = 'music' | 'movie' | 'tv';
+export type MediaKind = 'music' | 'movie' | 'tv' | 'audiobook';
 export type View =
   | 'home'
+  | 'audiobooks'
   | 'music'
   | 'albums'
   | 'artists'
@@ -10,6 +11,7 @@ export type View =
   | 'recent'
   | 'sources'
   | 'jellyfin'
+  | 'broadcast'
   | 'settings'
   | `playlist:${string}`;
 
@@ -38,6 +40,7 @@ export interface MediaItem {
   addedAt: number;
   lastPlayed: number;
   resume: number;
+  progressUpdatedAt?: number;
   watched: boolean;
   available: boolean;
   series: string;

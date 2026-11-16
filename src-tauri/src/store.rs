@@ -11,6 +11,7 @@ use std::{
 
 pub struct Store {
     pub db: Mutex<Connection>,
+    pub tag_edits: Mutex<()>,
     pub data_dir: PathBuf,
     pub ffmpeg: PathBuf,
     pub scanning: AtomicBool,
@@ -35,6 +36,7 @@ impl Store {
           PRAGMA user_version=1;").map_err(err)?;
         Ok(Self {
             db: Mutex::new(conn),
+            tag_edits: Mutex::new(()),
             data_dir,
             ffmpeg,
             scanning: AtomicBool::new(false),
@@ -95,6 +97,72 @@ impl Store {
         let conn = self.db.lock().map_err(err)?;
         conn.execute("INSERT INTO items(id,source_id,path,data) VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,path=excluded.path,data=excluded.data",
             params![item.id, item.source_id, item.path, serde_json::to_string(item).map_err(err)?]).map_err(err)?;
+        Ok(())
+    }
+    /// Merge an edit into the latest row so a slow file write cannot roll back playback progress.
+    pub fn change_item(
+        &self,
+        id: &str,
+        change: impl FnOnce(&mut MediaItem),
+    ) -> Result<MediaItem, String> {
+        let conn = self.db.lock().map_err(err)?;
+        let json: String = conn
+            .query_row("SELECT data FROM items WHERE id=?1", [id], |r| r.get(0))
+            .map_err(err)?;
+        let mut item: MediaItem = serde_json::from_str(&json).map_err(err)?;
+        change(&mut item);
+        conn.execute(
+            "UPDATE items SET data=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&item).map_err(err)?],
+        )
+        .map_err(err)?;
+        Ok(item)
+    }
+    pub fn update_progress(
+        &self,
+        id: &str,
+        position: f64,
+        duration: f64,
+        completed: bool,
+        count_play: bool,
+    ) -> Result<(), String> {
+        if !position.is_finite() || !duration.is_finite() {
+            return Err("Invalid playback time".into());
+        }
+        let conn = self.db.lock().map_err(err)?;
+        let json: String = conn
+            .query_row("SELECT data FROM items WHERE id=?1", [id], |r| r.get(0))
+            .map_err(err)?;
+        let mut item: MediaItem = serde_json::from_str(&json).map_err(err)?;
+        if duration > 0. {
+            item.duration = duration;
+        }
+        item.progress_updated_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        item.resume = if completed {
+            0.
+        } else if item.duration > 0. {
+            position.clamp(0., item.duration)
+        } else {
+            position.max(0.)
+        };
+        if count_play {
+            item.play_count = item.play_count.saturating_add(1);
+            item.last_played = now();
+        }
+        if item.kind == "audiobook" {
+            item.last_played = now();
+            item.watched = completed;
+        } else if completed && item.kind != "music" {
+            item.watched = true;
+        }
+        conn.execute(
+            "UPDATE items SET data=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&item).map_err(err)?],
+        )
+        .map_err(err)?;
         Ok(())
     }
     pub fn source(&self, id: &str) -> Result<Source, String> {

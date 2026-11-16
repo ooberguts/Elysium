@@ -1,4 +1,5 @@
 export const VISUALIZER_FAMILIES = [
+  { id: 'signature', label: 'Elysium living worlds' },
   { id: 'wmp', label: 'Windows Media Player inspired' },
   { id: 'itunes', label: 'iTunes inspired' },
   { id: 'xbox', label: 'Original Xbox inspired' },
@@ -9,6 +10,9 @@ export const VISUALIZER_FAMILIES = [
 export type VisualizerFamily = (typeof VISUALIZER_FAMILIES)[number]['id'];
 export type VisualizerQuality = 'balanced' | 'high';
 export type VisualizerStyle =
+  | 'current'
+  | 'garden'
+  | 'aurora'
   | 'prism'
   | 'ocean'
   | 'dots'
@@ -39,7 +43,7 @@ export const VISUALIZER_PRESETS: readonly VisualizerPreset[] = [
     id: 'prism',
     family: 'wmp',
     name: 'Prismatic Alchemy',
-    description: 'Kaleidoscopic petals and phosphor trails.',
+    description: 'An all-screen kaleidoscope of liquid color and recursive light.',
     hue: 280,
   },
   {
@@ -67,21 +71,21 @@ export const VISUALIZER_PRESETS: readonly VisualizerPreset[] = [
     id: 'celestial',
     family: 'itunes',
     name: 'Celestial Orbits',
-    description: 'An orbiting cloud of stars around a glowing core.',
+    description: 'A tilted celestial ring in a field of stars.',
     hue: 215,
   },
   {
     id: 'stardust',
     family: 'itunes',
     name: 'Stardust',
-    description: 'Spiraling particles and long, colorful light trails.',
+    description: 'Spiral nebulae, star fields, and drifting light.',
     hue: 30,
   },
   {
     id: 'reactor',
     family: 'xbox',
     name: 'Emerald Reactor',
-    description: 'Green plasma, breathing membranes, and a molten core.',
+    description: 'A sculpted plasma core with luminous veins.',
     hue: 112,
   },
   {
@@ -102,21 +106,21 @@ export const VISUALIZER_PRESETS: readonly VisualizerPreset[] = [
     id: 'neon',
     family: 'xbox360',
     name: 'Neon Continuum',
-    description: 'Sweeping 3D light ribbons and electric color.',
+    description: 'Electric ribbons inside a shifting, mirrored color field.',
     hue: 300,
   },
   {
     id: 'tunnel',
     family: 'xbox360',
     name: 'Infinity Tunnel',
-    description: 'A twisting flight through concentric neon geometry.',
+    description: 'A psychedelic flight through rippling walls of neon light.',
     hue: 225,
   },
   {
     id: 'bloom',
     family: 'xbox360',
     name: 'Cosmic Bloom',
-    description: 'Symmetric laser flowers unfurl with every beat.',
+    description: 'Fractal flowers and mirrored color surge with the bass.',
     hue: 275,
   },
   {
@@ -140,9 +144,33 @@ export const VISUALIZER_PRESETS: readonly VisualizerPreset[] = [
     description: 'A quiet pool of color that follows the music.',
     hue: 180,
   },
+  {
+    id: 'current',
+    family: 'signature',
+    name: 'Chromatic Current',
+    description:
+      'Iridescent liquid folds into flowing rivers of color. Bass moves the current; percussion leaves luminous traces.',
+    hue: 185,
+  },
+  {
+    id: 'garden',
+    family: 'signature',
+    name: 'Fractal Sanctuary',
+    description:
+      'A living Julia fractal: branching filaments unfurl, curl, and transform with the music.',
+    hue: 285,
+  },
+  {
+    id: 'aurora',
+    family: 'signature',
+    name: 'Aurora Cathedral',
+    description:
+      'Immense silk curtains of light breathe and intertwine. Melodies shape the folds; high notes ignite their edges.',
+    hue: 165,
+  },
 ];
 
-export const DEFAULT_VISUALIZER = 'ribbons';
+export const DEFAULT_VISUALIZER = 'current';
 export function getVisualizer(id: string | undefined): VisualizerPreset {
   return (
     VISUALIZER_PRESETS.find((p) => p.id === id) ||
@@ -161,14 +189,10 @@ export function randomVisualizer(id: string, random = Math.random): VisualizerPr
   return choices[Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)))];
 }
 
-/** Only time spent visibly playing counts toward a preset rotation. */
-export class PresetClock {
-  elapsed = 0;
-  tick(seconds: number, active: boolean, reducedMotion: boolean): boolean {
-    if (!active || reducedMotion) return false;
-    this.elapsed += Math.max(0, Math.min(seconds, 1));
-    if (this.elapsed < 30) return false;
-    this.elapsed = 0;
-    return true;
-  }
+/** Show mode keeps the immersive scenes together instead of cutting to meters. */
+export function nextShowPreset(id: string, previous: string, random = Math.random) {
+  const choices = VISUALIZER_PRESETS.filter(
+    (p) => p.family !== 'essentials' && p.id !== id && p.id !== previous,
+  );
+  return choices[Math.min(choices.length - 1, Math.max(0, Math.floor(random() * choices.length)))];
 }

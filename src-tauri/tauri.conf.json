@@ -22,7 +22,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost jellyfin: http://jellyfin.localhost blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'",
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost jellyfin: http://jellyfin.localhost blob: http://127.0.0.1:*; worker-src 'self' blob:; connect-src ipc: http://ipc.localhost http://127.0.0.1:* ws://127.0.0.1:1420; style-src 'self' 'unsafe-inline'",
       "assetProtocol": { "enable": true, "scope": [] }
     }
   },

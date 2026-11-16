@@ -35,6 +35,8 @@ export function viewItems(view: View, library: Library, all: MediaItem[]): Media
     return p ? playlistItems(p, all) : [];
   }
   switch (view) {
+    case 'audiobooks':
+      return all.filter((i) => i.kind === 'audiobook');
     case 'movies':
       return all.filter((i) => i.kind === 'movie');
     case 'tv':
@@ -117,3 +119,5 @@ export function albumGroups(
     ),
   }));
 }
+
+export const isAudio = (item: MediaItem) => item.kind === 'music' || item.kind === 'audiobook';

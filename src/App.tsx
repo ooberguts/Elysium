@@ -1,6 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Album,
+  BookOpen,
+  AudioLines,
+  Radio,
+  Waves,
   ArrowDownAZ,
   ArrowLeft,
   Check,
@@ -54,7 +58,6 @@ import {
   Artwork,
   EmptyCollection,
   MediaCards,
-  MetadataDialog,
   Modal,
   PlaylistDialog,
   Rating,
@@ -63,15 +66,35 @@ import {
   VideoDetail,
 } from './components';
 import { chooseFiles, chooseFolder, desktop, loadLibrary, native, open, savePath } from './bridge';
-import { albumGroups, filterItems, seconds, unique, viewItems } from './domain';
+import {
+  albumGroups,
+  filterItems,
+  isAudio,
+  playlistItems,
+  seconds,
+  unique,
+  viewItems,
+} from './domain';
 import { usePlayer } from './player';
 import { Visualizer, VisualizerOptions } from './visualizers/Visualizer';
+import { PresetGallery } from './visualizers/PresetGallery';
+import { useAudioCapture, type AudioDevice } from './visualizers/capture';
+import { AudioSourceDialog } from './visualizers/AudioSourceDialog';
+import { useBroadcast } from './broadcast/useBroadcast';
+import { BroadcastPanel } from './broadcast/BroadcastPanel';
+import { Audiobooks } from './Audiobooks';
+import { MetadataDialog } from './MetadataEditor';
+import { ContextMenu, type MenuAction } from './ContextMenu';
+import { contextSelection } from './selection';
+const BroadcastVideo = lazy(() =>
+  import('./broadcast/VideoPlayer').then((m) => ({ default: m.BroadcastVideo })),
+);
 import {
   DEFAULT_VISUALIZER,
+  VISUALIZER_PRESETS,
   getVisualizer,
   stepVisualizer,
   randomVisualizer,
-  PresetClock,
   VISUALIZER_FAMILIES,
   type VisualizerQuality,
 } from './visualizers/catalog';
@@ -87,12 +110,14 @@ import {
   type View,
 } from './types';
 import './styles.css';
+import './polish.css';
 
 const nav = [
   { id: 'home', label: 'Listen & watch', icon: Home },
   { id: 'music', label: 'Songs', icon: Music2 },
   { id: 'albums', label: 'Albums', icon: Album },
   { id: 'artists', label: 'Artists', icon: Mic2 },
+  { id: 'audiobooks', label: 'Audiobooks', icon: BookOpen },
   { id: 'movies', label: 'Movies', icon: Film },
   { id: 'tv', label: 'TV shows', icon: Tv },
 ] as const;
@@ -101,12 +126,14 @@ const names: Record<string, string> = {
   music: 'Music',
   albums: 'Albums',
   artists: 'Artists',
+  audiobooks: 'Audiobooks',
   movies: 'Movies',
   tv: 'TV shows',
   favorites: 'Favorites',
   recent: 'Recently added',
   sources: 'Sources',
   jellyfin: 'Jellyfin',
+  broadcast: 'LAN broadcast',
   settings: 'Preferences',
 };
 const subtitles: Record<string, string> = {
@@ -138,11 +165,17 @@ export default function App() {
     [pinned, setPinned] = useState(true),
     [queueOpen, setQueueOpen] = useState(false),
     [nowPlaying, setNowPlaying] = useState(false),
+    [visualizerOnly, setVisualizerOnly] = useState(false),
     [visualMode, setVisualMode] = useState(DEFAULT_VISUALIZER),
     [visualQuality, setVisualQuality] = useState<VisualizerQuality>('balanced'),
     [visualAuto, setVisualAuto] = useState(false),
     [visualInfo, setVisualInfo] = useState(true),
     [visualReduced, setVisualReduced] = useState(false),
+    [visualIntensity, setVisualIntensity] = useState(1),
+    [visualGallery, setVisualGallery] = useState(false),
+    [theater, setTheater] = useState(false),
+    [visualExternal, setVisualExternal] = useState(false),
+    [audioSourceOpen, setAudioSourceOpen] = useState(false),
     [eqOpen, setEqOpen] = useState(false);
   const [sourceDialog, setSourceDialog] = useState(false),
     [playlistDialog, setPlaylistDialog] = useState(false),
@@ -191,8 +224,82 @@ export default function App() {
     void refresh().catch(() => {});
   });
   const { state: playback, current } = player;
-  const visualPlaying = useRef(playback.playing);
-  visualPlaying.current = playback.playing;
+  const capture = useAudioCapture();
+  const broadcast = useBroadcast();
+  const seenInvitations = useRef(new Set<string>());
+  const wasBroadcasting = useRef(false);
+  useEffect(() => {
+    const active = !!broadcast.state.station?.active;
+    if (wasBroadcasting.current && !active) void refresh().catch(() => {});
+    wasBroadcasting.current = active;
+  }, [broadcast.state.station?.active, refresh]);
+  useEffect(() => {
+    for (const invitation of broadcast.state.invitations) {
+      if (!seenInvitations.current.has(invitation.id)) {
+        seenInvitations.current.add(invitation.id);
+        notify(`${invitation.name} invited this room. Open LAN broadcast to join.`);
+      }
+    }
+  }, [broadcast.state.invitations, notify]);
+  useEffect(() => {
+    if (broadcast.active && playback.playing) {
+      player.pause();
+      notify('Stop LAN broadcast before playing another library item.');
+    }
+  }, [broadcast.active, playback.playing, player.pause, notify]);
+  useEffect(() => {
+    if (broadcast.state.enabled)
+      void native('broadcast_activity', { busy: playback.playing || capture.running }).catch(
+        () => {},
+      );
+  }, [broadcast.state.enabled, playback.playing, capture.running]);
+  async function prepareBroadcast() {
+    await player.stop();
+    await capture.stop();
+  }
+  const [showControls, setShowControls] = useState(true);
+  useEffect(() => {
+    if (!theater || !nowPlaying || mini) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const reveal = () => {
+      setShowControls(true);
+      clearTimeout(timer);
+      timer = setTimeout(() => setShowControls(false), 3000);
+    };
+    reveal();
+    window.addEventListener('pointermove', reveal);
+    window.addEventListener('pointerdown', reveal);
+    window.addEventListener('keydown', reveal);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('pointermove', reveal);
+      window.removeEventListener('pointerdown', reveal);
+      window.removeEventListener('keydown', reveal);
+    };
+  }, [theater, nowPlaying, mini]);
+  const broadcastVideoStage = nowPlaying && !!broadcast.state.video && !visualizerOnly;
+  const musicStage =
+    nowPlaying &&
+    !broadcastVideoStage &&
+    (visualizerOnly || visualExternal || !current || isAudio(current));
+  const visualActive = broadcast.active
+    ? broadcast.running
+    : visualExternal
+      ? capture.running
+      : playback.playing;
+  async function chooseAudioDevice(device: AudioDevice) {
+    if (broadcast.active) await broadcast.stop();
+    if (playback.playing) await player.toggle();
+    setVisualExternal(true);
+    setNowPlaying(true);
+    await capture.start(device);
+  }
+  useEffect(() => {
+    if (!nowPlaying || mini || !visualExternal) void capture.stop();
+  }, [nowPlaying, mini, visualExternal, capture.stop]);
+  useEffect(() => {
+    if (capture.running) setAudioSourceOpen(false);
+  }, [capture.running]);
   const selectedPlaylist = library.playlists.find((p) => view === `playlist:${p.id}`);
   const baseItems = useMemo(() => viewItems(view, library, allItems), [view, library, allItems]);
   const filtered = useMemo(() => {
@@ -282,6 +389,12 @@ export default function App() {
         setVisualAuto(data.settings.visualAuto === 'true');
         setVisualInfo(data.settings.visualInfo !== 'false');
         setVisualReduced(data.settings.visualReduced === 'true');
+        const savedIntensity = Number(data.settings.visualIntensity);
+        setVisualIntensity(
+          Number.isFinite(savedIntensity) && savedIntensity >= 0.5 && savedIntensity <= 1.5
+            ? savedIntensity
+            : 1,
+        );
         setServerAddress(data.settings.serverAddress || '');
         if (data.settings.player)
           try {
@@ -317,6 +430,7 @@ export default function App() {
           visualAuto: String(visualAuto),
           visualInfo: String(visualInfo),
           visualReduced: String(visualReduced),
+          visualIntensity: String(visualIntensity),
           serverAddress,
         },
       }).catch((e) => notify(String(e)));
@@ -331,6 +445,7 @@ export default function App() {
     visualAuto,
     visualInfo,
     visualReduced,
+    visualIntensity,
     serverAddress,
     loaded,
     notify,
@@ -365,7 +480,10 @@ export default function App() {
       if (e.payload.type === 'drop') {
         const paths = e.payload.paths;
         void task('Adding dropped files…', async () => {
-          const count = await native<number>('import_files', { paths });
+          const count = await native<number>('import_files', {
+            paths,
+            kind: view === 'audiobooks' ? 'audiobook' : null,
+          });
           await refresh();
           notify(`${count} files added`);
         });
@@ -375,7 +493,7 @@ export default function App() {
       void unlisten.then((fn) => fn());
       void drop.then((fn) => fn());
     };
-  }, [task, refresh, notify]);
+  }, [task, refresh, notify, view]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -384,10 +502,36 @@ export default function App() {
         e.preventDefault();
         search.current?.focus();
       }
-      if (editing || document.querySelector('dialog[open]')) return;
-      if (e.code === 'Space') {
+      if (editing || document.querySelector('dialog[open], [role=menu]')) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'a' && !nowPlaying) {
         e.preventDefault();
-        void player.toggle();
+        setSelected(new Set(filtered.map((i) => i.id)));
+      }
+      if (e.key === 'Escape') {
+        setTheater(false);
+        setNowPlaying(false);
+      }
+      if (musicStage && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          setVisualMode((v) => stepVisualizer(v, 1).id);
+        }
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          setVisualMode((v) => stepVisualizer(v, -1).id);
+        }
+        if (e.key.toLowerCase() === 't') setTheater((t) => !t);
+      }
+      if (e.code === 'Space' && !(e.target as HTMLElement)?.closest('button,summary,a')) {
+        e.preventDefault();
+        if (broadcast.active && (musicStage || broadcastVideoStage)) {
+          void broadcast
+            .call('broadcast_pause_room', { paused: !broadcast.state.paused })
+            .catch(() => {});
+        } else if (visualExternal && musicStage) {
+          if (capture.running) void capture.stop();
+          else setAudioSourceOpen(true);
+        } else void player.toggle();
       }
       if ((e.metaKey || e.ctrlKey) && e.key === 'i' && selected.size) {
         e.preventDefault();
@@ -396,27 +540,18 @@ export default function App() {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [player, selected]);
-
-  useEffect(() => {
-    if (!visualAuto || !nowPlaying || mini || current?.kind !== 'music') return;
-    const clock = new PresetClock();
-    const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
-    let last = performance.now();
-    const timer = window.setInterval(() => {
-      const now = performance.now();
-      if (
-        clock.tick(
-          (now - last) / 1000,
-          visualPlaying.current && !document.hidden,
-          visualReduced || motion.matches,
-        )
-      )
-        setVisualMode(randomVisualizer(visualMode).id);
-      last = now;
-    }, 500);
-    return () => window.clearInterval(timer);
-  }, [visualAuto, nowPlaying, mini, current?.kind, visualReduced, visualMode]);
+  }, [
+    player,
+    selected,
+    nowPlaying,
+    musicStage,
+    broadcastVideoStage,
+    broadcast,
+    visualExternal,
+    capture.running,
+    capture.stop,
+    filtered,
+  ]);
 
   useEffect(() => {
     if (player.video.current) player.video.current.playbackRate = rate;
@@ -430,14 +565,17 @@ export default function App() {
     });
   }, [playback.currentId]);
 
-  async function importFiles() {
+  async function importFiles(kind?: 'audiobook') {
     await task('Adding media…', async () => {
       const paths = await chooseFiles();
       if (!paths.length) return;
-      const count = await native<number>('import_files', { paths });
+      const count = await native<number>('import_files', {
+        paths,
+        kind: kind || (view === 'audiobooks' ? 'audiobook' : null),
+      });
       await refresh();
       notify(`${count} files added to your library`);
-      navigate('music');
+      navigate(kind === 'audiobook' || view === 'audiobooks' ? 'audiobooks' : 'music');
     });
   }
   async function scan(source: Source) {
@@ -490,12 +628,185 @@ export default function App() {
       notify(String(e));
     }
   }
+  type MenuState = {
+    x: number;
+    y: number;
+    items: MediaItem[];
+    ratings?: boolean;
+    playlists?: boolean;
+    queueIndex?: number;
+  };
+  const [contextMenu, setContextMenu] = useState<MenuState | null>(null);
+  function openItemMenu(
+    items: MediaItem[],
+    event: React.MouseEvent | React.KeyboardEvent,
+    queueIndex?: number,
+  ) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({
+      items,
+      queueIndex,
+      x: 'clientX' in event ? event.clientX : rect.left + 20,
+      y: 'clientY' in event ? event.clientY : rect.top + 20,
+    });
+  }
+  function openTrackMenu(item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) {
+    const targets = contextSelection([...filtered, ...allItems], selected, item);
+    if (!selected.has(item.id)) setSelected(new Set([item.id]));
+    openItemMenu(targets, event);
+  }
+  function menuActions(menu: MenuState): MenuAction[] {
+    const local = menu.items.every((i) => !i.serverId);
+    if (menu.playlists)
+      return library.playlists
+        .filter((p) => !p.rule)
+        .map((p) => ({
+          label: p.name,
+          run: () =>
+            void addToPlaylist(
+              p.id,
+              menu.items.map((i) => i.id),
+            ),
+        }));
+    if (menu.ratings)
+      return [0, 1, 2, 3, 4, 5].map((n) => ({
+        label: n ? `${'★'.repeat(n)} · ${n} of 5 stars` : 'Clear rating',
+        run: () =>
+          void task('Saving ratings…', async () => {
+            const result = await native<{
+              saved: number;
+              embedded: number;
+              errors: string[];
+              warnings: string[];
+            }>('update_metadata', {
+              ids: menu.items.map((i) => i.id),
+              changes: { rating: String(n) },
+              writeFiles: true,
+            });
+            await refresh();
+            notify(
+              `${result.saved} ratings saved · ${result.embedded} files updated${result.warnings.length ? ` · ${result.warnings.length} library only` : ''}${result.errors.length ? ` · ${result.errors.join('; ')}` : ''}`,
+            );
+          }),
+      }));
+    if (menu.items.length)
+      return [
+        {
+          label: menu.items.length > 1 ? `Play ${menu.items.length} selected items` : 'Play',
+          icon: <Play size={15} />,
+          run: () => {
+            if (
+              menu.queueIndex !== undefined &&
+              playback.queue[menu.queueIndex] === menu.items[0].id
+            )
+              void player.jump(menu.queueIndex);
+            else play(menu.items[0], menu.items);
+          },
+          disabled: !menu.items[0].available,
+        },
+        {
+          label: 'Play next',
+          run: () => {
+            [...menu.items].reverse().forEach((i) => player.enqueue(i.id, true));
+          },
+        },
+        {
+          label: 'Add to queue',
+          run: () => {
+            menu.items.forEach((i) => player.enqueue(i.id));
+          },
+        },
+        ...(menu.queueIndex === undefined
+          ? []
+          : [
+              {
+                label: 'Remove from queue',
+                disabled: menu.queueIndex === playback.index,
+                run: () =>
+                  player.set((s) => {
+                    const index = menu.queueIndex!;
+                    if (s.index === index || s.queue[index] !== menu.items[0].id) return s;
+                    return {
+                      ...s,
+                      queue: s.queue.filter((_, i) => i !== index),
+                      index: index < s.index ? s.index - 1 : s.index,
+                    };
+                  }),
+              },
+            ]),
+        {
+          label: 'Add to playlist…',
+          disabled: !local || !library.playlists.some((p) => !p.rule),
+          run: () => setContextMenu({ ...menu, playlists: true }),
+        },
+        ...(menu.items.length === 1
+          ? [
+              {
+                label: menu.items[0].favorite ? 'Remove from favorites' : 'Add to favorites',
+                disabled: !local,
+                run: () => void favorite(menu.items[0]),
+              },
+            ]
+          : []),
+        {
+          label:
+            menu.items.length > 1
+              ? `Edit metadata for ${menu.items.length} items…`
+              : 'Edit metadata…',
+          icon: <Info size={15} />,
+          divider: true,
+          run: () => setInfoIds(menu.items.map((i) => i.id)),
+        },
+        {
+          label: 'Set rating…',
+          disabled: !local,
+          run: () => setContextMenu({ ...menu, ratings: true }),
+        },
+        {
+          label: 'Select all visible items',
+          divider: true,
+          run: () => setSelected(new Set(filtered.map((i) => i.id))),
+        },
+        { label: 'Clear selection', run: () => setSelected(new Set()) },
+      ];
+    return [
+      { label: 'Add media files…', run: () => void importFiles() },
+      { label: 'Add media folder…', run: () => setSourceDialog(true) },
+      {
+        label: 'Select all visible items',
+        disabled: !filtered.length || nowPlaying,
+        run: () => setSelected(new Set(filtered.map((i) => i.id))),
+      },
+      { label: 'Preferences', divider: true, run: () => navigate('settings') },
+    ];
+  }
+  const ratingPending = useRef(new Set<string>());
+  const [ratingBusy, setRatingBusy] = useState<Set<string>>(new Set());
   async function rating(item: MediaItem, rating: number) {
+    if (item.serverId) {
+      notify('Jellyfin ratings are managed on your server.');
+      return;
+    }
+    if (ratingPending.current.has(item.id)) return;
+    ratingPending.current.add(item.id);
+    setRatingBusy(new Set(ratingPending.current));
     try {
-      await native('set_rating', { id: item.id, rating });
+      const result = await native<{ embedded: boolean; warning?: string }>('set_rating', {
+        id: item.id,
+        rating,
+      });
       await refresh();
+      notify(
+        result.warning ||
+          `${rating ? `${rating} of 5 stars` : 'Rating cleared'} · saved in Elysium and file metadata`,
+      );
     } catch (e) {
       notify(String(e));
+    } finally {
+      ratingPending.current.delete(item.id);
+      setRatingBusy(new Set(ratingPending.current));
     }
   }
   function select(item: MediaItem, event: React.MouseEvent) {
@@ -515,8 +826,14 @@ export default function App() {
     if (!event.shiftKey) selectedAnchor.current = index;
   }
   function play(item: MediaItem, collection = filtered) {
-    void player.play(item, collection);
-    if (item.kind !== 'music') {
+    if (broadcast.active) {
+      notify('Stop LAN broadcast before playing another library item.');
+      return;
+    }
+    setVisualExternal(false);
+    setVisualizerOnly(false);
+    void player.play(item, item.kind === 'audiobook' ? [item] : collection);
+    if (!isAudio(item)) {
       setNowPlaying(true);
       setDetailId(null);
     }
@@ -576,13 +893,13 @@ export default function App() {
       notify(String(e));
     }
   }
-  async function addToPlaylist(id: string) {
+  async function addToPlaylist(id: string, itemIds: string[] = [...selected]) {
     const list = library.playlists.find((p) => p.id === id);
     if (!list) return;
     try {
       await native('update_playlist', {
         id,
-        itemIds: [...list.itemIds, ...[...selected].filter((id) => !id.includes(':'))],
+        itemIds: [...list.itemIds, ...itemIds.filter((id) => !id.includes(':'))],
       });
       await refresh();
       notify(`Added to ${list.name}`);
@@ -722,20 +1039,55 @@ export default function App() {
 
   return (
     <div
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('input,textarea,[contenteditable="true"]')) return;
+        e.preventDefault();
+        if ((e.target as HTMLElement).closest('dialog')) return;
+        const inLibrary =
+          (e.target as HTMLElement).closest('.content') &&
+          !['home', 'settings', 'sources', 'broadcast', 'jellyfin'].includes(view);
+        openItemMenu(
+          nowPlaying && (e.target as HTMLElement).closest('.music-stage,.video-stage')
+            ? current && !visualExternal && !broadcast.active
+              ? [current]
+              : []
+            : inLibrary
+              ? allItems.filter((i) => selected.has(i.id))
+              : [],
+          e,
+        );
+      }}
       onClick={(e) => {
         const button = (e.target as HTMLElement).closest?.('button');
         const menu = button?.closest('details');
         if (menu) menu.removeAttribute('open');
       }}
-      className={`app ${mini ? 'mini-mode' : ''} ${compact ? 'compact' : ''} ${nowPlaying && current && !mini ? 'expanded-player' : ''}`}
+      className={`app ${mini ? 'mini-mode' : ''} ${compact ? 'compact' : ''} ${theater && nowPlaying && !mini ? 'theater-mode' : ''} ${(nowPlaying || current?.kind === 'audiobook') && !mini ? 'expanded-player' : ''}`}
       data-theme={theme}
+      data-controls={showControls ? 'shown' : 'hidden'}
     >
+      {contextMenu && (
+        <ContextMenu
+          {...contextMenu}
+          title={
+            contextMenu.playlists
+              ? 'Add to playlist'
+              : contextMenu.ratings
+                ? 'Set rating'
+                : contextMenu.items.length > 1
+                  ? `${contextMenu.items.length} selected items`
+                  : contextMenu.items[0]?.title || 'Library actions'
+          }
+          actions={menuActions(contextMenu)}
+          close={() => setContextMenu(null)}
+        />
+      )}
       <audio ref={player.audio} crossOrigin="anonymous" preload="metadata" />
       <header className="app-header">
         <div className="brand">
           <div className="brand-mark">e</div>
           <span>elysium</span>
-          <span className="version-label">0.2</span>
+          <span className="version-label">LOCAL PLAYER</span>
         </div>
         <div className="header-menus">
           <details>
@@ -787,13 +1139,19 @@ export default function App() {
             className="icon-button"
             aria-label="Go to library home"
             onClick={() => navigate('home')}
-            disabled={view === 'home'}
+            disabled={view === 'home' && !nowPlaying}
           >
             <ChevronLeft size={18} />
           </button>
           <span>Library</span>
           <ChevronRight size={12} />
-          <strong>{selectedPlaylist?.name || names[view]}</strong>
+          <strong>
+            {nowPlaying
+              ? musicStage
+                ? 'Visualizer'
+                : 'Now Playing'
+              : selectedPlaylist?.name || names[view]}
+          </strong>
         </div>
         <label className="global-search">
           <Search size={16} />
@@ -804,6 +1162,7 @@ export default function App() {
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
+              setNowPlaying(false);
               if (['home', 'sources', 'settings', 'jellyfin'].includes(view)) setView('music');
             }}
           />
@@ -822,7 +1181,8 @@ export default function App() {
             {nav.map((n) => (
               <button
                 key={n.id}
-                className={view === n.id ? 'active' : ''}
+                className={!nowPlaying && view === n.id ? 'active' : ''}
+                aria-current={!nowPlaying && view === n.id ? 'page' : undefined}
                 onClick={() => navigate(n.id)}
               >
                 <n.icon size={17} />
@@ -836,18 +1196,44 @@ export default function App() {
           <div className="sidebar-group">
             <span className="sidebar-label">YOUR COLLECTION</span>
             <button
-              className={view === 'favorites' ? 'active' : ''}
+              className={!nowPlaying && view === 'favorites' ? 'active' : ''}
               onClick={() => navigate('favorites')}
             >
               <Heart size={16} />
               <span>Favorites</span>
             </button>
             <button
-              className={view === 'recent' ? 'active' : ''}
+              className={!nowPlaying && view === 'recent' ? 'active' : ''}
               onClick={() => navigate('recent')}
             >
               <Sparkles size={16} />
               <span>Recently added</span>
+            </button>
+          </div>
+          <div className="sidebar-group visualizer-nav">
+            <button
+              className={!nowPlaying && view === 'broadcast' ? 'active' : ''}
+              onClick={() => navigate('broadcast')}
+            >
+              <Radio size={17} />
+              <span>LAN broadcast</span>
+              {!!broadcast.state.invitations.length ? (
+                <span className="nav-new">{broadcast.state.invitations.length}</span>
+              ) : (
+                broadcast.active && <span className="nav-new">LIVE</span>
+              )}
+            </button>
+            <button
+              className={musicStage ? 'active' : ''}
+              aria-current={musicStage ? 'page' : undefined}
+              onClick={() => {
+                setVisualizerOnly(true);
+                setNowPlaying(true);
+              }}
+            >
+              <AudioLines size={17} />
+              <span>Visualizer</span>
+              <span className="nav-new">LIVE</span>
             </button>
           </div>
           <div className="sidebar-group playlist-nav">
@@ -864,8 +1250,9 @@ export default function App() {
             {library.playlists.map((p) => (
               <button
                 key={p.id}
-                className={view === `playlist:${p.id}` ? 'active' : ''}
+                className={!nowPlaying && view === `playlist:${p.id}` ? 'active' : ''}
                 onClick={() => navigate(`playlist:${p.id}`)}
+                onContextMenu={(e) => openItemMenu(playlistItems(p, allItems), e)}
                 onDragOver={(e) => {
                   if (!p.rule) e.preventDefault();
                 }}
@@ -893,7 +1280,7 @@ export default function App() {
           <div className="sidebar-group sources-nav">
             <span className="sidebar-label">CONNECTED</span>
             <button
-              className={view === 'sources' ? 'active' : ''}
+              className={!nowPlaying && view === 'sources' ? 'active' : ''}
               onClick={() => navigate('sources')}
             >
               <FolderOpen size={17} />
@@ -903,7 +1290,7 @@ export default function App() {
               />
             </button>
             <button
-              className={view === 'jellyfin' ? 'active' : ''}
+              className={!nowPlaying && view === 'jellyfin' ? 'active' : ''}
               onClick={() => navigate('jellyfin')}
             >
               <Server size={16} />
@@ -919,7 +1306,7 @@ export default function App() {
             </div>
           </div>
           <button
-            className={`preferences-link ${view === 'settings' ? 'active' : ''}`}
+            className={`preferences-link ${!nowPlaying && view === 'settings' ? 'active' : ''}`}
             onClick={() => navigate('settings')}
           >
             <Settings2 size={16} />
@@ -928,8 +1315,21 @@ export default function App() {
         </aside>
 
         <main className="content">
+          {broadcastVideoStage && (
+            <Suspense fallback={<div className="broadcast-video-message">Loading live video…</div>}>
+              <BroadcastVideo
+                broadcast={broadcast}
+                theater={theater}
+                toggleTheater={() => setTheater((t) => !t)}
+                back={() => {
+                  setTheater(false);
+                  navigate('broadcast');
+                }}
+              />
+            </Suspense>
+          )}
           <div
-            className={`video-stage ${nowPlaying && current?.kind !== 'music' && current ? 'shown' : ''}`}
+            className={`video-stage ${nowPlaying && !broadcastVideoStage && !musicStage && current && !isAudio(current) ? 'shown' : ''}`}
           >
             <div className="stage-top">
               <button onClick={() => setNowPlaying(false)}>
@@ -959,19 +1359,53 @@ export default function App() {
             </video>
           </div>
 
-          <div className={`music-stage ${nowPlaying && current?.kind === 'music' ? 'shown' : ''}`}>
+          <div className={`music-stage ${musicStage ? 'shown' : ''}`}>
             <div className="stage-top">
-              <button onClick={() => setNowPlaying(false)}>
-                <ArrowLeft size={16} />
-                Library
+              <button
+                onClick={() => {
+                  setNowPlaying(false);
+                  setTheater(false);
+                }}
+              >
+                <ArrowLeft size={16} /> Library
               </button>
+              <button
+                className="stage-source"
+                onClick={() =>
+                  broadcast.active ? navigate('broadcast') : setAudioSourceOpen(true)
+                }
+              >
+                <AudioLines size={15} />
+                {broadcast.active
+                  ? broadcast.name
+                  : visualExternal
+                    ? capture.name
+                    : 'Elysium player'}
+                <ChevronDown size={12} />
+              </button>
+              <div className="stage-actions">
+                <button onClick={() => setVisualGallery(true)}>
+                  <Grid2X2 size={15} /> Atmospheres
+                </button>
+                <button
+                  aria-pressed={theater}
+                  title="Theater view (T)"
+                  onClick={() => setTheater(!theater)}
+                >
+                  <Maximize2 size={15} /> {theater ? 'Exit theater' : 'Theater'}
+                </button>
+              </div>
             </div>
-            {nowPlaying && current?.kind === 'music' && !mini && (
+            {musicStage && !mini && (
               <Visualizer
                 player={player}
                 mode={visualMode}
+                auto={visualAuto}
+                onPresetChange={setVisualMode}
                 quality={visualQuality}
                 reducedMotion={visualReduced}
+                intensity={visualIntensity}
+                external={broadcast.active ? broadcast : visualExternal ? capture : undefined}
                 large
               />
             )}
@@ -980,9 +1414,18 @@ export default function App() {
                 {VISUALIZER_FAMILIES.find((f) => f.id === getVisualizer(visualMode).family)?.label}
               </span>
               <strong>{getVisualizer(visualMode).name}</strong>
-              <small>{playback.playing ? 'LIVE AUDIO' : 'PAUSED · VISUALS FROZEN'}</small>
+              <small>
+                <i className={visualActive ? 'live-dot' : ''} />
+                {visualActive
+                  ? !broadcast.active && visualExternal && capture.level < 0.005
+                    ? 'LISTENING FOR MUSIC'
+                    : 'REACTING TO YOUR MUSIC'
+                  : 'PAUSED'}
+              </small>
             </div>
-            <div className={`now-playing-art ${visualInfo ? '' : 'hidden'}`}>
+            <div
+              className={`now-playing-art ${visualInfo && !visualExternal && !broadcast.active && current ? '' : 'hidden'}`}
+            >
               <Artwork item={current} />
               <div>
                 <p className="eyebrow">NOW PLAYING</p>
@@ -993,18 +1436,41 @@ export default function App() {
             </div>
           </div>
 
-          <div className={`library-content ${nowPlaying && current ? 'covered' : ''}`}>
+          <div className={`library-content ${nowPlaying ? 'covered' : ''}`}>
             {!loaded ? (
               <div className="loading-library">
                 <LoaderCircle className="spin" />
                 <p>Opening your library…</p>
               </div>
-            ) : !allItems.length && !['sources', 'settings', 'jellyfin'].includes(view) ? (
+            ) : !allItems.length &&
+              !['sources', 'settings', 'jellyfin', 'broadcast', 'audiobooks'].includes(view) ? (
               <EmptyCollection
                 add={() => setSourceDialog(true)}
                 files={() => void importFiles()}
                 samples={() => void samples()}
                 busy={!!busy}
+              />
+            ) : view === 'broadcast' ? (
+              <BroadcastPanel
+                broadcast={broadcast}
+                library={library}
+                queue={playback.queue}
+                prepare={prepareBroadcast}
+                visualize={() => {
+                  setVisualizerOnly(!broadcast.state.video);
+                  setNowPlaying(true);
+                }}
+                createPlaylist={() => setPlaylistDialog(true)}
+                addMusic={() => setSourceDialog(true)}
+              />
+            ) : view === 'audiobooks' ? (
+              <Audiobooks
+                contextMenu={openTrackMenu}
+                items={filtered}
+                play={(i) => play(i, [i])}
+                add={() => void importFiles('audiobook')}
+                folder={() => setSourceDialog(true)}
+                info={(i) => setInfoIds([i.id])}
               />
             ) : view === 'sources' ? (
               <SourcesView
@@ -1142,9 +1608,10 @@ export default function App() {
                     </select>
                   </label>
                   <p className="visualizer-note">
-                    Fifteen original effects, including twelve inspired by Windows Media Player,
-                    iTunes, Xbox, and Xbox 360. Choose a song and open Now Playing to watch. The
-                    originals’ plug-ins and assets are not bundled.
+                    {VISUALIZER_PRESETS.length} original scenes, from flowing color and living
+                    fractals to classic desktop-inspired effects. Open Visualizer in the sidebar,
+                    then choose the Elysium player, system audio, or an input device. Use
+                    Atmospheres to explore the collection.
                   </p>
                   <label>
                     Visualizer performance
@@ -1229,11 +1696,10 @@ export default function App() {
               <div className="home-view">
                 <div className="home-intro">
                   <div>
-                    <p className="eyebrow">WELCOME TO YOUR COLLECTION</p>
+                    <p className="eyebrow">YOUR PERSONAL COLLECTION</p>
                     <h1>
-                      A little more
-                      <br />
-                      listening. A little less noise.
+                      A little more music.
+                      <br />A little less noise.
                     </h1>
                     <p>
                       {allItems.filter((i) => i.kind === 'music').length} songs.{' '}
@@ -1259,15 +1725,46 @@ export default function App() {
                       ))}
                   </div>
                 </div>
+                {allItems.some((i) => i.kind === 'music' && i.available) && (
+                  <button
+                    className="light-show-entry"
+                    onClick={() => {
+                      setVisualExternal(false);
+                      setVisualizerOnly(true);
+                      if (current?.kind !== 'music') {
+                        const music = allItems.filter((i) => i.kind === 'music' && i.available);
+                        if (music[0]) play(music[0], music);
+                      } else if (!playback.playing) void player.toggle();
+                      setNowPlaying(true);
+                    }}
+                  >
+                    <span className="light-show-symbol">
+                      <Sparkles size={24} />
+                    </span>
+                    <span>
+                      <small>MADE FOR LISTENING</small>
+                      <strong>Give your music a whole new dimension.</strong>
+                      <span>
+                        Explore {VISUALIZER_PRESETS.length} immersive, audio-reactive atmospheres.
+                      </span>
+                    </span>
+                    <span className="light-show-cta">
+                      Enter the light show <ChevronRight size={16} />
+                    </span>
+                  </button>
+                )}
                 {allItems.some((i) => i.resume > 0 && i.kind !== 'music') && (
                   <section>
                     <div className="section-heading">
-                      <h2>Continue watching</h2>
+                      <h2>Pick up where you left off</h2>
                     </div>
                     <MediaCards
+                      contextMenu={openTrackMenu}
                       items={allItems.filter((i) => i.resume > 0 && i.kind !== 'music').slice(0, 6)}
                       play={(i) => play(i)}
-                      detail={(i) => setDetailId(i.id)}
+                      detail={(i) =>
+                        i.kind === 'audiobook' ? setInfoIds([i.id]) : setDetailId(i.id)
+                      }
                     />
                   </section>
                 )}
@@ -1283,7 +1780,11 @@ export default function App() {
                     {albumGroups(allItems.filter((i) => i.kind === 'music'))
                       .slice(0, 6)
                       .map((group) => (
-                        <article className="album-card" key={group.key}>
+                        <article
+                          className="album-card"
+                          key={group.key}
+                          onContextMenu={(e) => openItemMenu(group.items, e)}
+                        >
                           <button
                             className="cover-button"
                             onClick={() => {
@@ -1323,9 +1824,12 @@ export default function App() {
                       </button>
                     </div>
                     <MediaCards
+                      contextMenu={openTrackMenu}
                       items={allItems.filter((i) => i.kind === 'movie').slice(0, 6)}
                       play={(i) => play(i)}
-                      detail={(i) => setDetailId(i.id)}
+                      detail={(i) =>
+                        i.kind === 'audiobook' ? setInfoIds([i.id]) : setDetailId(i.id)
+                      }
                     />
                   </section>
                 )}
@@ -1385,11 +1889,27 @@ export default function App() {
                   <span className="selection-label">
                     {selected.size ? `${selected.size} selected` : `${filtered.length} items`}
                   </span>
+                  <button
+                    className="small-button"
+                    onClick={() =>
+                      setSelected(
+                        new Set(
+                          filtered.length > 0 && filtered.every((i) => selected.has(i.id))
+                            ? []
+                            : filtered.map((i) => i.id),
+                        ),
+                      )
+                    }
+                  >
+                    {filtered.length > 0 && filtered.every((i) => selected.has(i.id))
+                      ? 'Clear selection'
+                      : 'Select all'}
+                  </button>
                   {selected.size > 0 && (
                     <>
                       <button className="small-button" onClick={() => setInfoIds([...selected])}>
                         <Info size={14} />
-                        Get Info
+                        Edit metadata
                       </button>
                       <AddToPlaylist
                         playlists={library.playlists}
@@ -1519,9 +2039,12 @@ export default function App() {
                 {view === 'movies' || view === 'tv' ? (
                   <div className="grid-scroll">
                     <MediaCards
+                      contextMenu={openTrackMenu}
                       items={filtered}
                       play={(i) => play(i)}
-                      detail={(i) => setDetailId(i.id)}
+                      detail={(i) =>
+                        i.kind === 'audiobook' ? setInfoIds([i.id]) : setDetailId(i.id)
+                      }
                       television={view === 'tv'}
                     />
                     {!filtered.length && (
@@ -1536,7 +2059,11 @@ export default function App() {
                   <div className="grid-scroll">
                     <div className="album-grid">
                       {albums.map((group) => (
-                        <article key={group.key} className="album-card">
+                        <article
+                          key={group.key}
+                          className="album-card"
+                          onContextMenu={(e) => openItemMenu(group.items, e)}
+                        >
                           <button
                             className="cover-button"
                             onClick={() => {
@@ -1576,6 +2103,7 @@ export default function App() {
                       return (
                         <button
                           className="artist-card"
+                          onContextMenu={(e) => openItemMenu(group, e)}
                           key={name}
                           onClick={() => {
                             navigate('music');
@@ -1602,6 +2130,9 @@ export default function App() {
                     info={(i) => setInfoIds([i.id])}
                     enqueue={player.enqueue}
                     compact={compact}
+                    rate={(i, n) => void rating(i, n)}
+                    ratingBusy={ratingBusy}
+                    contextMenu={openTrackMenu}
                   />
                 )}
               </>
@@ -1632,6 +2163,11 @@ export default function App() {
                   <div
                     className={`queue-item ${index === playback.index ? 'active' : ''}`}
                     key={`${index}:${id}`}
+                    onContextMenu={(e) => openItemMenu([item], e, index)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))
+                        openItemMenu([item], e, index);
+                    }}
                   >
                     <button className="queue-item-main" onClick={() => void player.jump(index)}>
                       <Artwork item={item} />
@@ -1725,132 +2261,250 @@ export default function App() {
         </button>
       </div>
       <footer className="player-footer">
-        <button
-          className="now-art-button"
-          aria-label="Open Now Playing"
-          onClick={() => setNowPlaying(!nowPlaying)}
-        >
-          <Artwork item={current} />
-        </button>
-        <div className="footer-info">
-          <button className="track-title-button" onClick={() => setNowPlaying(!nowPlaying)}>
-            {current?.title || 'Nothing playing yet'}
-          </button>
-          <span>
-            {current?.artist ||
-              current?.series ||
-              (current
-                ? [current.year, current.kind === 'movie' ? 'Movie' : current.format]
-                    .filter(Boolean)
-                    .join(' · ')
-                : 'Pick something you love.')}
-          </span>
-          {current && !current.serverId && (
-            <Rating item={current} rate={(n) => void rating(current, n)} />
-          )}
-        </div>
-        <button
-          className={`icon-button footer-heart ${current?.favorite ? 'loved' : ''}`}
-          aria-label="Favorite current item"
-          disabled={!current}
-          onClick={() => current && void favorite(current)}
-        >
-          <Heart size={18} fill={current?.favorite ? 'currentColor' : 'none'} />
-        </button>
-        <div className="footer-playback">
-          <div className="footer-transport">
+        {broadcast.active ? (
+          <div className="external-transport broadcast-transport">
+            <div className="external-device-icon">
+              <Radio size={26} />
+            </div>
+            <div className="external-device-copy">
+              <strong>{broadcast.track?.title || broadcast.name}</strong>
+              <span>
+                {broadcast.name}
+                {broadcast.track?.artist ? ` · ${broadcast.track.artist}` : ''} ·{' '}
+                {broadcast.state.station?.active
+                  ? 'Broadcasting'
+                  : broadcast.state.listening?.phase}
+              </span>
+            </div>
             <button
-              className={`icon-button ${playback.shuffle ? 'active' : ''}`}
-              aria-label="Shuffle"
-              aria-pressed={playback.shuffle}
-              onClick={player.toggleShuffle}
+              onClick={() => {
+                setVisualizerOnly(!broadcast.state.video);
+                setNowPlaying(true);
+              }}
             >
-              <Shuffle size={15} />
+              <Waves size={15} />
+              {broadcast.state.video ? 'Watch video' : 'Visualizer'}
             </button>
-            <div className="mini-transport">{transport}</div>
-            <button
-              className={`icon-button ${playback.repeat !== 'off' ? 'active' : ''}`}
-              aria-label={`Repeat: ${playback.repeat}`}
-              onClick={() =>
-                player.set((s) => ({
-                  ...s,
-                  repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
-                }))
-              }
-            >
-              {playback.repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
+            <button onClick={() => navigate('broadcast')}>
+              <Radio size={15} />
+              LAN broadcast
+            </button>
+            <button onClick={() => void broadcast.stop().catch(() => {})}>
+              <Square size={13} />
+              {broadcast.state.station?.active ? 'Stop broadcast' : 'Leave station'}
             </button>
           </div>
-          <div className="seek-row">
-            <span>{seconds(playback.position)}</span>
-            <input
-              type="range"
-              aria-label="Playback position"
-              min="0"
-              max={playback.duration || 1}
-              step="0.1"
-              value={Math.min(playback.position, playback.duration || 1)}
-              onChange={(e) => player.seek(Number(e.target.value))}
-              disabled={!current}
-            />
-            <span>{seconds(playback.duration)}</span>
-          </div>
-        </div>
-        <div className="footer-visual">
-          <Visualizer player={player} active={!mini} />
-        </div>
-        <div className="footer-tools">
-          {volumeControls}
-          <div className="footer-actions">
+        ) : visualExternal && nowPlaying && !mini ? (
+          <div className="external-transport">
+            <div className="external-device-icon">
+              <AudioLines size={26} />
+            </div>
+            <div className="external-device-copy">
+              <strong>{capture.name}</strong>
+              <span>
+                {capture.busy
+                  ? 'Connecting to audio device…'
+                  : capture.running
+                    ? capture.level > 0.005
+                      ? 'Receiving audio · live visualization'
+                      : 'Listening · play something in your other app'
+                    : 'Listening stopped'}
+              </span>
+            </div>
+            <meter min="0" max="1" value={capture.level} aria-label="Audio input level" />
+            {capture.error && (
+              <span className="capture-error" role="alert">
+                {capture.error}
+              </span>
+            )}
+            {capture.running ? (
+              <button onClick={() => void capture.stop()}>
+                <Square size={13} />
+                Stop listening
+              </button>
+            ) : (
+              <button
+                className="primary"
+                onClick={() => setAudioSourceOpen(true)}
+                disabled={capture.busy}
+              >
+                Choose audio source
+              </button>
+            )}
             <button
-              className={`icon-button ${eqOpen ? 'active' : ''}`}
-              aria-label="Equalizer"
-              title="Equalizer"
-              onClick={() => setEqOpen(!eqOpen)}
+              className="icon-button"
+              aria-label="Change audio source"
+              onClick={() => setAudioSourceOpen(true)}
             >
               <SlidersHorizontal size={18} />
             </button>
             <button
-              className={`icon-button ${queueOpen ? 'active' : ''}`}
-              aria-label="Open queue"
-              title="Up Next"
-              aria-pressed={queueOpen}
-              onClick={() => setQueueOpen(!queueOpen)}
-            >
-              <ListMusic size={20} />
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Mini player"
-              title="Mini player"
-              onClick={() => void toggleMini()}
-            >
-              <Minimize2 size={17} />
-            </button>
-            <button
-              className="icon-button"
-              aria-label="Now Playing"
-              title="Now Playing"
-              disabled={!current}
-              onClick={() => setNowPlaying(!nowPlaying)}
-            >
-              <MonitorPlay size={18} />
-            </button>
-            <button
               className="icon-button"
               aria-label="Full screen"
-              title="Full screen"
-              disabled={!current}
               onClick={() => void fullScreen()}
             >
-              <Maximize2 size={17} />
+              <Maximize2 size={18} />
             </button>
           </div>
-        </div>
+        ) : (
+          <>
+            <button
+              className="now-art-button"
+              aria-label="Open Now Playing"
+              onClick={() => setNowPlaying(!nowPlaying)}
+            >
+              <Artwork item={current} />
+            </button>
+            <div
+              className="footer-info"
+              onContextMenu={(e) => {
+                if (current) openItemMenu([current], e);
+              }}
+            >
+              <button className="track-title-button" onClick={() => setNowPlaying(!nowPlaying)}>
+                {current?.title || 'Nothing playing yet'}
+              </button>
+              <span>
+                {current?.artist ||
+                  current?.series ||
+                  (current
+                    ? [current.year, current.kind === 'movie' ? 'Movie' : current.format]
+                        .filter(Boolean)
+                        .join(' · ')
+                    : 'Pick something you love.')}
+              </span>
+              {current && !current.serverId && (
+                <Rating
+                  item={current}
+                  rate={(n) => void rating(current, n)}
+                  disabled={ratingBusy.has(current.id) || !!current.serverId}
+                />
+              )}
+            </div>
+            <button
+              className={`icon-button footer-heart ${current?.favorite ? 'loved' : ''}`}
+              aria-label="Favorite current item"
+              disabled={!current}
+              onClick={() => current && void favorite(current)}
+            >
+              <Heart size={18} fill={current?.favorite ? 'currentColor' : 'none'} />
+            </button>
+            <div className="footer-playback">
+              <div className="footer-transport">
+                <button
+                  className={`icon-button ${playback.shuffle ? 'active' : ''}`}
+                  aria-label="Shuffle"
+                  aria-pressed={playback.shuffle}
+                  onClick={player.toggleShuffle}
+                >
+                  <Shuffle size={15} />
+                </button>
+                <div className="mini-transport">{transport}</div>
+                <button
+                  className={`icon-button ${playback.repeat !== 'off' ? 'active' : ''}`}
+                  aria-label={`Repeat: ${playback.repeat}`}
+                  onClick={() =>
+                    player.set((s) => ({
+                      ...s,
+                      repeat: s.repeat === 'off' ? 'all' : s.repeat === 'all' ? 'one' : 'off',
+                    }))
+                  }
+                >
+                  {playback.repeat === 'one' ? <Repeat1 size={16} /> : <Repeat size={16} />}
+                </button>
+              </div>
+              <div className="seek-row">
+                <span>{seconds(playback.position)}</span>
+                <input
+                  type="range"
+                  aria-label="Playback position"
+                  min="0"
+                  max={playback.duration || 1}
+                  step="0.1"
+                  value={Math.min(playback.position, playback.duration || 1)}
+                  onChange={(e) => player.seek(Number(e.target.value))}
+                  disabled={!current}
+                />
+                <span>{seconds(playback.duration)}</span>
+              </div>
+            </div>
+            <div className="footer-visual">
+              <Visualizer player={player} active={!mini && !nowPlaying} />
+            </div>
+            <div className="footer-tools">
+              {volumeControls}
+              <div className="footer-actions">
+                <button
+                  className={`icon-button ${eqOpen ? 'active' : ''}`}
+                  aria-label="Equalizer"
+                  title="Equalizer"
+                  onClick={() => setEqOpen(!eqOpen)}
+                >
+                  <SlidersHorizontal size={18} />
+                </button>
+                <button
+                  className={`icon-button ${queueOpen ? 'active' : ''}`}
+                  aria-label="Open queue"
+                  title="Up Next"
+                  aria-pressed={queueOpen}
+                  onClick={() => setQueueOpen(!queueOpen)}
+                >
+                  <ListMusic size={20} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Mini player"
+                  title="Mini player"
+                  onClick={() => void toggleMini()}
+                >
+                  <Minimize2 size={17} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Now Playing"
+                  title="Now Playing"
+                  onClick={() => setNowPlaying(!nowPlaying)}
+                >
+                  <MonitorPlay size={18} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label="Full screen"
+                  title="Full screen"
+                  onClick={() => void fullScreen()}
+                >
+                  <Maximize2 size={17} />
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+        {current?.kind === 'audiobook' && !broadcast.active && !musicStage && !mini && (
+          <div className="book-transport">
+            <button onClick={() => player.seek(playback.position - 15)}>−15s</button>
+            <button onClick={() => player.seek(playback.position + 30)}>+30s</button>
+            <label>
+              Speed
+              <select
+                aria-label="Audiobook speed"
+                value={rate}
+                onChange={(e) => setRate(Number(e.target.value))}
+              >
+                {[0.5, 0.75, 1, 1.25, 1.5, 1.75, 2].map((r) => (
+                  <option key={r} value={r}>
+                    {r}×
+                  </option>
+                ))}
+              </select>
+            </label>
+            <span>Listening position saved automatically</span>
+          </div>
+        )}
         {nowPlaying &&
-          current &&
+          !broadcastVideoStage &&
+          (musicStage || current?.kind !== 'audiobook') &&
           !mini &&
-          (current.kind !== 'music' ? (
+          (!musicStage ? (
             <div className="footer-extra-controls">
               <button onClick={() => player.seek(playback.position - 10)}>−10s</button>
 
@@ -1889,7 +2543,14 @@ export default function App() {
             </div>
           ) : (
             <div className="footer-extra-controls visualizer-controls">
-              <span className="visualizer-control-label">Visualizer</span>
+              <button
+                className="gallery-button"
+                onClick={() => setVisualGallery(true)}
+                title="Browse atmospheres"
+              >
+                <Grid2X2 size={14} />
+                <span>Browse</span>
+              </button>
               <div className="preset-stepper">
                 <button
                   className="icon-button"
@@ -1923,21 +2584,35 @@ export default function App() {
               >
                 <Sparkles size={15} />
               </button>
-              <label title="Changes after 30 seconds of visible playback; disabled during reduced motion">
+              <label title="Flows to another immersive scene on a musical accent after 45–80 seconds; stays still during silence or reduced motion">
                 <input
                   type="checkbox"
                   checked={visualAuto}
                   onChange={(e) => setVisualAuto(e.target.checked)}
                 />
-                Auto · 30s
+                Auto show
               </label>
-              <label>
+              {!visualExternal && !broadcast.active && (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={visualInfo}
+                    onChange={(e) => setVisualInfo(e.target.checked)}
+                  />
+                  Track info
+                </label>
+              )}
+              <label className="intensity-control">
+                Intensity
                 <input
-                  type="checkbox"
-                  checked={visualInfo}
-                  onChange={(e) => setVisualInfo(e.target.checked)}
+                  type="range"
+                  aria-label="Visualizer intensity"
+                  min="0.5"
+                  max="1.5"
+                  step="0.05"
+                  value={visualIntensity}
+                  onChange={(e) => setVisualIntensity(Number(e.target.value))}
                 />
-                Track info
               </label>
               <select
                 aria-label="Visualizer performance"
@@ -1950,6 +2625,25 @@ export default function App() {
             </div>
           ))}
       </footer>
+      {audioSourceOpen && (
+        <AudioSourceDialog
+          capture={capture}
+          external={visualExternal}
+          usePlayer={() => setVisualExternal(false)}
+          choose={(device) => void chooseAudioDevice(device)}
+          close={() => {
+            if (capture.busy) void capture.stop();
+            setAudioSourceOpen(false);
+          }}
+        />
+      )}
+      {visualGallery && (
+        <PresetGallery
+          current={visualMode}
+          select={setVisualMode}
+          close={() => setVisualGallery(false)}
+        />
+      )}
       {mini && (
         <div className="mini-seek">
           <span>{seconds(playback.position)}</span>
@@ -2036,7 +2730,13 @@ export default function App() {
           Desktop preview · use <code>npm run desktop</code> to open your library and play media.
         </div>
       )}
-      {sourceDialog && <AddSourceDialog close={() => setSourceDialog(false)} add={addSource} />}
+      {sourceDialog && (
+        <AddSourceDialog
+          initialKind={view === 'audiobooks' ? 'audiobook' : 'mixed'}
+          close={() => setSourceDialog(false)}
+          add={addSource}
+        />
+      )}
       {playlistDialog && (
         <PlaylistDialog
           close={() => setPlaylistDialog(false)}
@@ -2056,6 +2756,7 @@ export default function App() {
           changed={refresh}
           notify={notify}
           activeId={playback.currentId}
+          stopPlayback={player.stop}
         />
       )}
       {detail && (

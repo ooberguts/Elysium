@@ -75,6 +75,7 @@ export class VisualizerRenderer {
           0.2 + f.energy * 0.8,
         );
         break;
+      case 'garden':
       case 'prism':
         this.prism(w, h, f, t);
         break;
@@ -87,6 +88,7 @@ export class VisualizerRenderer {
       case 'matrix':
         this.landscape(w, h, f, t, true);
         break;
+      case 'aurora':
       case 'ribbons':
         this.ribbons(w, h, f, t, false);
         break;
@@ -102,6 +104,7 @@ export class VisualizerRenderer {
       case 'reactor':
         this.reactor(w, h, f, t);
         break;
+      case 'current':
       case 'liquid':
         this.liquid(w, h, f, t);
         break;
