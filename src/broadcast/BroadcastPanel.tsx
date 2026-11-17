@@ -7,6 +7,7 @@ import {
   Play,
   Square,
   SkipForward,
+  SkipBack,
   Waves,
   Plus,
   Copy,
@@ -359,6 +360,17 @@ export function BroadcastPanel({
               </p>
               {station.message && <p className="broadcast-notice">{station.message}</p>}
               <div className="broadcast-actions">
+                <button disabled={disabled} onClick={() => invoke('broadcast_previous')}>
+                  <SkipBack size={15} />
+                  Previous item
+                </button>
+                <button
+                  disabled={disabled || !station.track}
+                  onClick={() => void b.toggle().catch(() => {})}
+                >
+                  {station.paused ? <Play size={15} /> : <Pause size={15} />}
+                  {station.paused ? 'Resume broadcast' : 'Pause broadcast'}
+                </button>
                 <button disabled={disabled} onClick={() => invoke('broadcast_next')}>
                   <SkipForward size={15} />
                   Next item
@@ -583,7 +595,7 @@ export function BroadcastPanel({
                     checked={shuffle}
                     onChange={(e) => setShuffle(e.target.checked)}
                   />
-                  Shuffle each pass
+                  Shuffle selection
                 </label>
                 <label>
                   <input
@@ -700,9 +712,16 @@ export function BroadcastPanel({
               </div>
             </div>
             {b.active && (
-              <button onClick={() => invoke('broadcast_pause_room', { paused: !s.paused })}>
+              <button
+                disabled={listening?.phase === 'paused'}
+                onClick={() => void b.toggle().catch(() => {})}
+              >
                 {s.paused ? <Play size={14} /> : <Pause size={14} />}{' '}
-                {s.paused ? 'Resume live' : 'Pause in this room'}
+                {listening?.phase === 'paused'
+                  ? 'Paused by broadcaster'
+                  : s.paused
+                    ? 'Resume live'
+                    : 'Pause in this room'}
               </button>
             )}
             <label>

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { desktop, native } from '../bridge';
 import type { CaptureFrame } from '../visualizers/capture';
+import { pauseAction } from './transport';
 
 export type Track = {
   title: string;
@@ -28,6 +29,7 @@ export type Station = {
   id: string;
   name: string;
   active: boolean;
+  paused: boolean;
   track: Track | null;
   position: number;
   elapsed: number;
@@ -62,6 +64,7 @@ export type Snapshot = {
     track: Track | null;
     message: string;
     output: string;
+    position: number;
   } | null;
   listeners: { id: string; deviceId: string; name: string; address: string }[];
   message: string;
@@ -161,13 +164,20 @@ export function useBroadcast() {
   const running =
     !state.paused &&
     !!(
-      (state.station?.active && state.station.playHere) ||
+      (state.station?.active && !state.station.paused && state.station.playHere) ||
       (state.listening?.active && state.listening.phase === 'playing')
     );
   const active = !!(state.station?.active || state.listening?.active);
   const name = state.station?.active ? state.station.name : state.listening?.name || 'LAN radio';
   const track = state.station?.active ? state.station.track : state.listening?.track;
   const stop = () => call(state.station?.active ? 'broadcast_stop' : 'broadcast_leave');
+  const paused = state.station?.active
+    ? state.station.paused
+    : state.paused || state.listening?.phase === 'paused';
+  const toggle = () => {
+    const action = pauseAction(state);
+    return action ? call(action.command, { paused: action.paused }) : Promise.resolve();
+  };
   return {
     state,
     frame,
@@ -180,6 +190,8 @@ export function useBroadcast() {
     call,
     refresh,
     stop,
+    paused,
+    toggle,
     quality,
     setQuality,
     receivedAt: receivedAt.current,

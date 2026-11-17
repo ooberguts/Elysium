@@ -13,6 +13,8 @@ export type View =
   | 'jellyfin'
   | 'broadcast'
   | 'settings'
+  | `artist:${string}`
+  | `album:${string}`
   | `playlist:${string}`;
 
 export interface MediaItem {

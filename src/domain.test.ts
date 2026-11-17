@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { albumGroups, filterItems, nextIndex, playlistItems, seconds, shuffled } from './domain';
+import {
+  albumGroups,
+  albumKey,
+  artistItems,
+  filterItems,
+  nextIndex,
+  playlistItems,
+  seconds,
+  shuffled,
+  viewItems,
+} from './domain';
 import type { MediaItem, Playlist } from './types';
+import { EMPTY_LIBRARY } from './types';
 
 const media = (id: string, extra: Partial<MediaItem> = {}): MediaItem => ({
   id,
@@ -58,6 +69,28 @@ describe('queue transitions', () => {
 });
 
 describe('library organization', () => {
+  it('artist pages include their own releases and contributions to compilation albums', () => {
+    const solo = media('solo', { artist: 'Artist', albumArtist: 'Artist' });
+    const compilation = media('compilation', {
+      artist: 'Artist',
+      albumArtist: 'Various Artists',
+      album: 'Collection',
+    });
+    const other = media('other', { artist: 'Someone else' });
+    const movie = media('movie', { kind: 'movie', artist: 'Artist' });
+    expect(artistItems([solo, compilation, other, movie], 'Artist')).toEqual([solo, compilation]);
+    expect(viewItems('artist:Artist', EMPTY_LIBRARY, [solo, compilation, other])).toEqual([
+      solo,
+      compilation,
+    ]);
+  });
+  it('album destinations select a full release without mixing namesakes from other artists', () => {
+    const album = [media('two', { track: 2 }), media('one', { track: 1 })];
+    const other = media('other', { artist: 'Other artist' });
+    const items = viewItems(`album:${albumKey(album[0])}`, EMPTY_LIBRARY, [...album, other]);
+    expect(albumGroups(items)[0].items.map((item) => item.id)).toEqual(['one', 'two']);
+    expect(items).toHaveLength(2);
+  });
   it('searches all words across fields and applies column filters together', () => {
     const a = media('a'),
       b = media('b', { artist: 'Someone Else', genre: 'Jazz' });

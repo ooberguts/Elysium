@@ -4,7 +4,6 @@ import {
   BookOpen,
   AudioLines,
   Radio,
-  Waves,
   ArrowDownAZ,
   ArrowLeft,
   Check,
@@ -68,6 +67,8 @@ import {
 import { chooseFiles, chooseFolder, desktop, loadLibrary, native, open, savePath } from './bridge';
 import {
   albumGroups,
+  albumKey,
+  artistItems,
   filterItems,
   isAudio,
   playlistItems,
@@ -82,10 +83,14 @@ import { useAudioCapture, type AudioDevice } from './visualizers/capture';
 import { AudioSourceDialog } from './visualizers/AudioSourceDialog';
 import { useBroadcast } from './broadcast/useBroadcast';
 import { BroadcastPanel } from './broadcast/BroadcastPanel';
+import { BroadcastTransport } from './broadcast/BroadcastTransport';
 import { Audiobooks } from './Audiobooks';
 import { MetadataDialog } from './MetadataEditor';
 import { ContextMenu, type MenuAction } from './ContextMenu';
 import { contextSelection } from './selection';
+import { AppUpdates, useUpdates } from './updates';
+import { CollectionPage } from './CollectionPage';
+import { useNavigation } from './navigation';
 const BroadcastVideo = lazy(() =>
   import('./broadcast/VideoPlayer').then((m) => ({ default: m.BroadcastVideo })),
 );
@@ -148,9 +153,11 @@ const subtitles: Record<string, string> = {
 };
 
 export default function App() {
+  const updates = useUpdates();
+  const navigation = useNavigation();
+  const { view, setView } = navigation;
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY),
-    [loaded, setLoaded] = useState(false),
-    [view, setView] = useState<View>('home');
+    [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState(''),
     [genre, setGenre] = useState(''),
     [artist, setArtist] = useState(''),
@@ -226,6 +233,9 @@ export default function App() {
   const { state: playback, current } = player;
   const capture = useAudioCapture();
   const broadcast = useBroadcast();
+  useEffect(() => {
+    if (broadcast.error) notify(broadcast.error);
+  }, [broadcast.error, notify]);
   const seenInvitations = useRef(new Set<string>());
   const wasBroadcasting = useRef(false);
   useEffect(() => {
@@ -323,7 +333,9 @@ export default function App() {
   const artists = unique(
     filtered
       .filter((i) => i.kind === 'music')
-      .map((i) => i.albumArtist || i.artist || 'Unknown artist'),
+      .flatMap((i) =>
+        [i.artist || i.albumArtist || 'Unknown artist', i.albumArtist].filter(Boolean),
+      ),
   );
   const filteredGenres = unique(baseItems.map((i) => i.genre));
   const filteredArtists = unique(
@@ -359,8 +371,28 @@ export default function App() {
     },
     [notify],
   );
-  const navigate = useCallback((next: View) => {
-    setView(next);
+  const navigate = useCallback(
+    (next: View) => {
+      setView(next);
+      setGenre('');
+      setArtist('');
+      setAlbum('');
+      setSeries('');
+      setQuery('');
+      setSelected(new Set());
+      setNowPlaying(false);
+      if (next.startsWith('playlist:')) setSort('playlist');
+    },
+    [setView],
+  );
+  const openArtist = (name: string) => navigate(`artist:${name}`);
+  const openAlbum = (item: MediaItem) => navigate(`album:${albumKey(item)}`);
+  const collectionTitle = view.startsWith('artist:')
+    ? view.slice(7)
+    : view.startsWith('album:')
+      ? baseItems[0]?.album || 'Untitled album'
+      : '';
+  const goBackOrForward = (direction: -1 | 1) => {
     setGenre('');
     setArtist('');
     setAlbum('');
@@ -368,8 +400,8 @@ export default function App() {
     setQuery('');
     setSelected(new Set());
     setNowPlaying(false);
-    if (next.startsWith('playlist:')) setSort('playlist');
-  }, []);
+    navigation.go(direction);
+  };
 
   useEffect(() => {
     if (initialized.current) return;
@@ -524,10 +556,8 @@ export default function App() {
       }
       if (e.code === 'Space' && !(e.target as HTMLElement)?.closest('button,summary,a')) {
         e.preventDefault();
-        if (broadcast.active && (musicStage || broadcastVideoStage)) {
-          void broadcast
-            .call('broadcast_pause_room', { paused: !broadcast.state.paused })
-            .catch(() => {});
+        if (broadcast.active) {
+          void broadcast.toggle().catch(() => {});
         } else if (visualExternal && musicStage) {
           if (capture.running) void capture.stop();
           else setAudioSourceOpen(true);
@@ -809,12 +839,12 @@ export default function App() {
       setRatingBusy(new Set(ratingPending.current));
     }
   }
-  function select(item: MediaItem, event: React.MouseEvent) {
-    const index = filtered.findIndex((i) => i.id === item.id);
+  function select(item: MediaItem, event: React.MouseEvent, collection = filtered) {
+    const index = collection.findIndex((i) => i.id === item.id);
     setSelected((prev) => {
       const next = new Set(event.metaKey || event.ctrlKey ? prev : []);
       if (event.shiftKey) {
-        for (const i of filtered.slice(
+        for (const i of collection.slice(
           Math.min(selectedAnchor.current, index),
           Math.max(selectedAnchor.current, index) + 1,
         ))
@@ -1087,7 +1117,11 @@ export default function App() {
         <div className="brand">
           <div className="brand-mark">e</div>
           <span>elysium</span>
-          <span className="version-label">LOCAL PLAYER</span>
+          <span className="version-label" title={updates.build?.commit}>
+            {updates.build
+              ? `${updates.build.shortCommit}${updates.build.dirty ? ' · local' : ''}`
+              : 'LOCAL PLAYER'}
+          </span>
         </div>
         <div className="header-menus">
           <details>
@@ -1137,20 +1171,30 @@ export default function App() {
         <div className="library-location">
           <button
             className="icon-button"
-            aria-label="Go to library home"
-            onClick={() => navigate('home')}
-            disabled={view === 'home' && !nowPlaying}
+            aria-label="Go back"
+            onClick={() => (nowPlaying ? setNowPlaying(false) : goBackOrForward(-1))}
+            disabled={!navigation.canBack && !nowPlaying}
           >
             <ChevronLeft size={18} />
           </button>
-          <span>Library</span>
+          <button
+            className="icon-button"
+            aria-label="Go forward"
+            disabled={!navigation.canForward}
+            onClick={() => goBackOrForward(1)}
+          >
+            <ChevronRight size={18} />
+          </button>
+          <button className="navigation-home" onClick={() => navigate('home')}>
+            Library
+          </button>
           <ChevronRight size={12} />
           <strong>
             {nowPlaying
               ? musicStage
                 ? 'Visualizer'
                 : 'Now Playing'
-              : selectedPlaylist?.name || names[view]}
+              : collectionTitle || selectedPlaylist?.name || names[view]}
           </strong>
         </div>
         <label className="global-search">
@@ -1181,7 +1225,14 @@ export default function App() {
             {nav.map((n) => (
               <button
                 key={n.id}
-                className={!nowPlaying && view === n.id ? 'active' : ''}
+                className={
+                  !nowPlaying &&
+                  (view === n.id ||
+                    (n.id === 'artists' && view.startsWith('artist:')) ||
+                    (n.id === 'albums' && view.startsWith('album:')))
+                    ? 'active'
+                    : ''
+                }
                 aria-current={!nowPlaying && view === n.id ? 'page' : undefined}
                 onClick={() => navigate(n.id)}
               >
@@ -1311,6 +1362,9 @@ export default function App() {
           >
             <Settings2 size={16} />
             Preferences
+            {updates.latest?.available && !updates.build?.dirty && (
+              <span className="update-badge">Update</span>
+            )}
           </button>
         </aside>
 
@@ -1683,15 +1737,32 @@ export default function App() {
                     </button>
                   </div>
                 </section>
+                <AppUpdates updates={updates} />
                 <section>
-                  <h2>Elysium 0.2.0</h2>
-                  <p>An independent music and video player by ooberguts.</p>
                   <button onClick={() => setHelp(true)}>
                     <CircleHelp size={16} />
                     About this test release
                   </button>
                 </section>
               </div>
+            ) : view.startsWith('artist:') || view.startsWith('album:') ? (
+              <CollectionPage
+                artist={view.startsWith('artist:') ? view.slice(7) : undefined}
+                items={baseItems}
+                query={query}
+                selected={selected}
+                currentId={playback.currentId}
+                play={play}
+                select={select}
+                favorite={(item) => void favorite(item)}
+                rate={(item, value) => void rating(item, value)}
+                ratingBusy={ratingBusy}
+                info={(item) => setInfoIds([item.id])}
+                enqueue={player.enqueue}
+                contextMenu={openTrackMenu}
+                openArtist={openArtist}
+                openAlbum={openAlbum}
+              />
             ) : view === 'home' && !query ? (
               <div className="home-view">
                 <div className="home-intro">
@@ -1787,15 +1858,7 @@ export default function App() {
                         >
                           <button
                             className="cover-button"
-                            onClick={() => {
-                              navigate('music');
-                              setAlbum(group.items[0].album);
-                              setArtist(
-                                group.items[0].albumArtist ||
-                                  group.items[0].artist ||
-                                  'Unknown artist',
-                              );
-                            }}
+                            onClick={() => openAlbum(group.items[0])}
                           >
                             <Artwork item={group.items[0]} />
                             <span
@@ -1808,8 +1871,22 @@ export default function App() {
                               <Play size={20} fill="currentColor" />
                             </span>
                           </button>
-                          <h3>{group.name}</h3>
-                          <p>{group.artist}</p>
+                          <h3>
+                            <button
+                              className="artist-link"
+                              onClick={() => openAlbum(group.items[0])}
+                            >
+                              {group.name}
+                            </button>
+                          </h3>
+                          <p>
+                            <button
+                              className="artist-link"
+                              onClick={() => openArtist(group.artist)}
+                            >
+                              {group.artist}
+                            </button>
+                          </p>
                         </article>
                       ))}
                   </div>
@@ -2055,7 +2132,7 @@ export default function App() {
                       </div>
                     )}
                   </div>
-                ) : view === 'albums' || grid ? (
+                ) : view === 'albums' || (grid && view !== 'artists') ? (
                   <div className="grid-scroll">
                     <div className="album-grid">
                       {albums.map((group) => (
@@ -2066,15 +2143,7 @@ export default function App() {
                         >
                           <button
                             className="cover-button"
-                            onClick={() => {
-                              navigate('music');
-                              setAlbum(group.items[0].album);
-                              setArtist(
-                                group.items[0].albumArtist ||
-                                  group.items[0].artist ||
-                                  'Unknown artist',
-                              );
-                            }}
+                            onClick={() => openAlbum(group.items[0])}
                           >
                             <Artwork item={group.items[0]} />
                             <span
@@ -2087,8 +2156,22 @@ export default function App() {
                               <Play size={20} fill="currentColor" />
                             </span>
                           </button>
-                          <h3>{group.name}</h3>
-                          <p>{group.artist}</p>
+                          <h3>
+                            <button
+                              className="artist-link"
+                              onClick={() => openAlbum(group.items[0])}
+                            >
+                              {group.name}
+                            </button>
+                          </h3>
+                          <p>
+                            <button
+                              className="artist-link"
+                              onClick={() => openArtist(group.artist)}
+                            >
+                              {group.artist}
+                            </button>
+                          </p>
                           <small>{group.items.length} tracks</small>
                         </article>
                       ))}
@@ -2097,17 +2180,14 @@ export default function App() {
                 ) : view === 'artists' ? (
                   <div className="grid-scroll artist-grid">
                     {artists.map((name) => {
-                      const group = filtered.filter(
-                        (i) => (i.albumArtist || i.artist || 'Unknown artist') === name,
-                      );
+                      const group = artistItems(filtered, name);
                       return (
                         <button
                           className="artist-card"
                           onContextMenu={(e) => openItemMenu(group, e)}
                           key={name}
                           onClick={() => {
-                            navigate('music');
-                            setArtist(name);
+                            openArtist(name);
                           }}
                         >
                           <Artwork item={group[0]} label={name} />
@@ -2133,6 +2213,8 @@ export default function App() {
                     rate={(i, n) => void rating(i, n)}
                     ratingBusy={ratingBusy}
                     contextMenu={openTrackMenu}
+                    openArtist={openArtist}
+                    openAlbum={openAlbum}
                   />
                 )}
               </>
@@ -2262,38 +2344,15 @@ export default function App() {
       </div>
       <footer className="player-footer">
         {broadcast.active ? (
-          <div className="external-transport broadcast-transport">
-            <div className="external-device-icon">
-              <Radio size={26} />
-            </div>
-            <div className="external-device-copy">
-              <strong>{broadcast.track?.title || broadcast.name}</strong>
-              <span>
-                {broadcast.name}
-                {broadcast.track?.artist ? ` · ${broadcast.track.artist}` : ''} ·{' '}
-                {broadcast.state.station?.active
-                  ? 'Broadcasting'
-                  : broadcast.state.listening?.phase}
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                setVisualizerOnly(!broadcast.state.video);
-                setNowPlaying(true);
-              }}
-            >
-              <Waves size={15} />
-              {broadcast.state.video ? 'Watch video' : 'Visualizer'}
-            </button>
-            <button onClick={() => navigate('broadcast')}>
-              <Radio size={15} />
-              LAN broadcast
-            </button>
-            <button onClick={() => void broadcast.stop().catch(() => {})}>
-              <Square size={13} />
-              {broadcast.state.station?.active ? 'Stop broadcast' : 'Leave station'}
-            </button>
-          </div>
+          <BroadcastTransport
+            broadcast={broadcast}
+            visualize={() => {
+              setVisualizerOnly(!broadcast.state.video);
+              setNowPlaying(true);
+            }}
+            settings={() => navigate('broadcast')}
+            fullScreen={() => void fullScreen()}
+          />
         ) : visualExternal && nowPlaying && !mini ? (
           <div className="external-transport">
             <div className="external-device-icon">

@@ -61,6 +61,10 @@ pub enum Control {
     NowPlaying {
         track: Track,
         at: i64,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        paused: bool,
+        #[serde(default)]
+        position: f64,
     },
     Reset {
         epoch: u64,

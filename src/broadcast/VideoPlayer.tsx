@@ -17,15 +17,15 @@ export function BroadcastVideo({
   const live = b.state.video!;
   const media = useRef<HTMLVideoElement>(null),
     engine = useRef<Hls | null>(null);
-  const latest = useRef({ live, paused: b.state.paused, receivedAt: b.receivedAt });
-  latest.current = { live, paused: b.state.paused, receivedAt: b.receivedAt };
+  const latest = useRef({ live, paused: b.paused, receivedAt: b.receivedAt });
+  latest.current = { live, paused: b.paused, receivedAt: b.receivedAt };
   const [source, setSource] = useState(live.url),
     [retry, setRetry] = useState(0),
     [message, setMessage] = useState('Preparing the live picture…'),
     [level, setLevel] = useState('');
   useEffect(() => {
-    if (!b.state.paused) setSource(live.url);
-  }, [live.url, b.state.paused]);
+    if (!b.paused) setSource(live.url);
+  }, [live.url, b.paused]);
   useEffect(() => {
     const video = media.current;
     if (!video) return;
@@ -162,8 +162,7 @@ export function BroadcastVideo({
     hls.on(Hls.Events.MANIFEST_PARSED, apply);
     return () => hls.off(Hls.Events.MANIFEST_PARSED, apply);
   }, [b.quality, source, retry]);
-  const pause = () =>
-    void b.call('broadcast_pause_room', { paused: !b.state.paused }).catch(() => {});
+  const pause = () => void b.toggle().catch(() => {});
   return (
     <div className="broadcast-video">
       <video ref={media} muted playsInline preload="auto" aria-label="Live broadcast video" />
@@ -180,11 +179,22 @@ export function BroadcastVideo({
       </div>
       <div className="broadcast-video-controls">
         <span className="on-air">
-          {b.state.paused ? 'PAUSED HERE' : 'LIVE'} {level && !b.state.paused ? `· ${level}` : ''}
+          {b.paused ? 'PAUSED' : 'LIVE'} {level && !b.paused ? `· ${level}` : ''}
         </span>
-        <button onClick={pause}>
-          {b.state.paused ? <Play size={15} /> : <Pause size={15} />}{' '}
-          {b.state.paused ? 'Resume live' : 'Pause here'}
+        <button
+          disabled={!b.state.station?.active && b.state.listening?.phase === 'paused'}
+          onClick={pause}
+        >
+          {b.paused ? <Play size={15} /> : <Pause size={15} />}{' '}
+          {b.state.station?.active
+            ? b.paused
+              ? 'Resume broadcast'
+              : 'Pause broadcast'
+            : b.state.listening?.phase === 'paused'
+              ? 'Paused by broadcaster'
+              : b.paused
+                ? 'Resume live'
+                : 'Pause here'}
         </button>
         <label>
           Video quality
@@ -204,9 +214,15 @@ export function BroadcastVideo({
           Reconnect picture
         </button>
       </div>
-      {(message || b.state.paused) && (
+      {(message || b.paused) && (
         <div className="broadcast-video-message" role="status">
-          {b.state.paused ? 'Paused in this room. Resume returns to the live broadcast.' : message}
+          {b.paused
+            ? b.state.station?.active
+              ? 'Broadcast paused for all rooms.'
+              : b.state.listening?.phase === 'paused'
+                ? 'The broadcaster paused playback.'
+                : 'Paused in this room. Resume returns to the live broadcast.'
+            : message}
         </div>
       )}
     </div>

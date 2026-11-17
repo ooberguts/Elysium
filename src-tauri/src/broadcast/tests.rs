@@ -48,6 +48,7 @@ fn fake_station(node: &Node) -> Arc<Station> {
         alive: AtomicBool::new(true),
         epoch: AtomicU64::new(1),
         skip: AtomicU64::new(0),
+        transport: Mutex::new(station::Transport::default()),
         subscribers: Mutex::new(HashMap::new()),
         sink: None,
         blocked: Mutex::new(HashSet::new()),
@@ -91,6 +92,150 @@ fn wait_for(mut condition: impl FnMut() -> bool) {
         assert!(start.elapsed() < Duration::from_secs(3), "timed out");
         std::thread::sleep(Duration::from_millis(5));
     }
+}
+
+fn headless_listener(host: &Arc<Node>) -> Arc<Node> {
+    let receiver = node();
+    let mut socket = hello(host, &uuid::Uuid::new_v4().to_string(), 1);
+    let Packet::Control(Control::Welcome {
+        station,
+        name,
+        epoch,
+        ..
+    }) = read_packet(&mut socket).unwrap()
+    else {
+        panic!("expected welcome")
+    };
+    let sink = Sink::new(receiver.origin, false, 0.75, 0);
+    sink.reset(epoch);
+    let address = format!("127.0.0.1:{}", host.port);
+    let client = Arc::new(Client {
+        address: address.clone(),
+        station: station.clone(),
+        track_at: AtomicI64::new(0),
+        alive: AtomicBool::new(true),
+        sink,
+        socket: Mutex::new(Some(socket.try_clone().unwrap())),
+        view: Mutex::new(ListeningView {
+            active: true,
+            name,
+            phase: "buffering".into(),
+            ..Default::default()
+        }),
+    });
+    *receiver.client.lock().unwrap() = Some(client.clone());
+    let worker = receiver.clone();
+    std::thread::spawn(move || {
+        network::listen(
+            worker,
+            client,
+            JoinRequest {
+                address,
+                station,
+                output_device: None,
+            },
+            socket,
+        )
+    });
+    receiver
+}
+
+#[test]
+fn host_transport_pauses_every_room_resumes_at_the_same_position_and_navigates_tracks() {
+    let temp = tempfile::tempdir().unwrap();
+    let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+    let store = Arc::new(
+        Store::new(
+            temp.path().join("library"),
+            resources.join(format!("bin/ffmpeg{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap(),
+    );
+    let mut first =
+        crate::media::read_media(&store, &resources.join("demo/01 - Glass Horizon.mp3"), None)
+            .unwrap();
+    // Include audiobook checkpoints to make sure a pause does not save decoded
+    // lookahead or advance listening progress while the station is frozen.
+    first.kind = "audiobook".into();
+    store.save_item(&first).unwrap();
+    let second = crate::media::read_media(
+        &store,
+        &resources.join("demo/02 - After the Rain.mp3"),
+        None,
+    )
+    .unwrap();
+    let host = node();
+    let _host = Cleanup(host.clone());
+    let station = station::launch(
+        host.clone(),
+        station::BroadcastRequest {
+            name: "Transport test".into(),
+            item_ids: vec![first.id.clone(), second.id.clone()],
+            mode: "once".into(),
+            minutes: 1,
+            finish_track: true,
+            resume_books: false,
+            shuffle: false,
+            play_here: false,
+            output_device: None,
+        },
+        vec![first.clone(), second],
+        store.clone(),
+    )
+    .unwrap();
+    *host.station.lock().unwrap() = Some(station.clone());
+    let a = headless_listener(&host);
+    let _a = Cleanup(a.clone());
+    let b = headless_listener(&host);
+    let _b = Cleanup(b.clone());
+    wait_for(|| {
+        a.snapshot().listening.unwrap().phase == "playing"
+            && b.snapshot().listening.unwrap().phase == "playing"
+    });
+    std::thread::sleep(Duration::from_millis(150));
+    station.pause(true).unwrap();
+    wait_for(|| {
+        a.snapshot().listening.unwrap().phase == "paused"
+            && b.snapshot().listening.unwrap().phase == "paused"
+    });
+    let frozen = station.snapshot(host.now());
+    assert!(frozen.paused);
+    let paused_a = a.snapshot().listening.unwrap().position;
+    let paused_b = b.snapshot().listening.unwrap().position;
+    assert!((paused_a - frozen.position).abs() < 0.001);
+    assert!((paused_b - frozen.position).abs() < 0.001);
+    let saved = store.item(&first.id).unwrap().resume;
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(station.snapshot(host.now()).position, frozen.position);
+    assert_eq!(a.snapshot().listening.unwrap().position, paused_a);
+    assert_eq!(store.item(&first.id).unwrap().resume, saved);
+    // Joining a paused station must also receive its frozen metadata.
+    let c = headless_listener(&host);
+    let _c = Cleanup(c.clone());
+    wait_for(|| c.snapshot().listening.unwrap().phase == "paused");
+    station.pause(false).unwrap();
+    wait_for(|| a.snapshot().listening.unwrap().phase == "playing");
+    let resumed = station.snapshot(host.now());
+    assert!(!resumed.paused);
+    assert!((resumed.track.unwrap().start_position - frozen.position).abs() < 0.05);
+    station.navigate(1).unwrap();
+    wait_for(|| {
+        station
+            .snapshot(host.now())
+            .track
+            .is_some_and(|track| track.index == 1)
+    });
+    station.navigate(-1).unwrap();
+    wait_for(|| {
+        station
+            .snapshot(host.now())
+            .track
+            .is_some_and(|track| track.index == 0)
+    });
+    station.pause(true).unwrap();
+    station.stop("Stopped while paused");
+    assert!(!station.alive.load(Ordering::Acquire));
+    assert!(station.child.lock().unwrap().is_none());
 }
 #[test]
 fn tcp_fanout_preserves_audio_clock_and_disconnect_policy() {
@@ -392,7 +537,7 @@ fn audiobook_broadcast_seeks_and_saves_the_presented_position() {
     let mut metadata = None;
     while metadata.is_none() {
         match read_packet(&mut receiver).unwrap() {
-            Packet::Control(Control::NowPlaying { track, at }) => metadata = Some((track, at)),
+            Packet::Control(Control::NowPlaying { track, at, .. }) => metadata = Some((track, at)),
             _ => {}
         }
     }

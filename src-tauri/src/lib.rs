@@ -7,6 +7,7 @@ mod models;
 mod ratings;
 mod remote;
 mod store;
+mod updates;
 
 use std::{path::PathBuf, sync::Arc};
 use tauri::Manager;
@@ -20,6 +21,7 @@ pub fn run() {
         .manage(remote)
         .manage(capture::CaptureState::default())
         .manage(broadcast::BroadcastState::default())
+        .manage(updates::UpdateState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(broadcast) = window.try_state::<broadcast::BroadcastState>() {
@@ -89,6 +91,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            updates::build_info,
+            updates::open_commit_page,
+            updates::check_for_updates,
+            updates::install_update,
             broadcast::broadcast_status,
             broadcast::broadcast_activity,
             broadcast::broadcast_pause_room,
@@ -99,6 +105,8 @@ pub fn run() {
             broadcast::broadcast_start,
             broadcast::broadcast_stop,
             broadcast::broadcast_next,
+            broadcast::broadcast_previous,
+            broadcast::broadcast_pause,
             broadcast::broadcast_join,
             broadcast::broadcast_leave,
             broadcast::broadcast_remove_listener,

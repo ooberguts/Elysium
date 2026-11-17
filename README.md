@@ -6,7 +6,7 @@ A personal music, audiobook, and video library built with TypeScript, React, Tau
 
 ## Try the app
 
-Open the packaged **Elysium.app** on macOS or the Windows installer from this private repository's Releases/Actions page. macOS test packages are locally signed and are not Apple-notarized; Windows test packages are unsigned.
+Use the [GitHub installation scripts](#install-from-github) below to install dependencies, build Elysium, and put it in your applications folder. You can also open a packaged **Elysium.app** on macOS or the Windows installer from this private repository's Releases/Actions page. macOS test packages are locally signed and are not Apple-notarized; Windows test packages are unsigned.
 
 1. Choose **Try the sample library**. Elysium includes three original synthesized songs, a short generated movie, and a sample TV episode.
 2. Open **Songs** and double-click a song. Try the column browser, search, queue, equalizer, and Now Playing visualizers.
@@ -18,7 +18,9 @@ The app never moves or deletes your source media. Compatibility conversion creat
 
 ## Included in this build
 
+- Windows and macOS installation scripts with dependency setup, dedicated source/tool folders, logs, and exact commit selection. Preferences shows the installed commit, checks GitHub on startup or on demand, and launches the update installer.
 - Persistent SQLite library with songs, albums, artists, audiobooks, movies, and TV episodes.
+- Artist pages with album artwork, a discography grouped by album, and songs from both their releases and compilation appearances. Album covers and titles open a full album page with its ordered track list. Back/forward buttons connect library, artist, and album pages.
 - Classic Silver and Graphite themes, compact song rows, virtualized song tables, column browsing, text search, sorting, favorites, and ratings. All playback controls live in the bottom strip; the top is reserved for navigation and search.
 - Local files, external drives, mounted network folders, incremental rescans, scan cancellation, offline retention, and source rebinding.
 - Music and video playback, seek, speed, shuffle, repeat, persistent queue, resume checkpoints, and basic OS Media Session integration.
@@ -64,7 +66,7 @@ To share a book around the house, choose **LAN broadcast → Audiobooks**. Broad
 
 In **LAN broadcast**, choose **Video**, then a movie, TV series, playlist, genre, queue, or all local videos. Once/repeat/timed programming works like music. Join from another Elysium computer, then choose **Watch video**. The sender encodes up to 1080p, 720p, and 480p (never exceeding source height), with a six-second startup buffer.
 
-**Auto · keep live** adapts picture quality to the connection. High, Medium, and Low cap the chosen stream to a fixed rendition. Audio follows the shared room clock; picture playback corrects drift toward that clock. **Pause here** pauses only this room. **Resume live** returns to the current broadcast moment, including if the program changed while paused. Each room has its own volume, output, timing adjustment, and video quality. Local subtitles are not transmitted. Video broadcasting uses local library files, not browser/screen capture or protected streaming services.
+**Auto · keep live** adapts picture quality to the connection. High, Medium, and Low cap the chosen stream to a fixed rendition. Audio follows the shared room clock; picture playback corrects drift toward that clock. On a listener, **Pause here** pauses only this room and **Resume live** returns to the current broadcast moment, including if the program changed while paused. On the host, **Pause broadcast** freezes the broadcast for every room; resuming starts again at that position after buffering. Each room has its own volume, output, timing adjustment, and video quality. Local subtitles are not transmitted. Video broadcasting uses local library files, not browser/screen capture or protected streaming services.
 
 Video needs a current WebView with Media Source Extensions and H.264 support; encoding three renditions requires more CPU than music. Multi-computer acoustic sync, Windows hardware, and stressed-network adaptive quality still require physical-device qualification; see [TESTING.md](docs/TESTING.md).
 
@@ -104,10 +106,9 @@ Open **LAN broadcast** in the sidebar on each computer and enable it with a room
 
 1. On the broadcaster, choose a **playlist, artist, album, genre, current queue, or all music**. Use **New playlist** to create one, then add songs from the library selection toolbar. The broadcast uses a snapshot of the selected songs in playlist order, including intentional repeats.
 2. Choose **Keep repeating**, **Play once**, or **Play for a set time** (1 minute–7 days). Timed runs can finish the current song or stop at the exact audio-time limit. Shuffle reshuffles each pass. Unavailable tracks are skipped; a completely unavailable selection stops with an explanation.
-3. Leave **Play on this computer too** selected for synchronized local playback, or turn it off for a silent radio host. Start the station; **Next** and **Stop broadcast** control every listener.
-4. On another computer, choose the discovered station and **Join**. If discovery is blocked, copy the broadcaster's displayed LAN address and use **Join by address**. New listeners tune in to the current moment.
-5. To bring rooms in from the broadcaster, select them under **Bring in more rooms**. An idle room with **Accept playback requests while idle** enabled joins automatically. Other idle rooms get a 60-second invitation to accept. Busy rooms keep their current session. Listeners can leave independently; the broadcaster can disconnect a listener.
-6. Each room chooses its own audio output and volume. Stop its session to change outputs. **Timing adjustment** (-500 to +500 ms) compensates for additional speaker/receiver latency; positive values delay that room. The visualizer follows the native audio being played in that room.
+3. Leave **Play on this computer too** selected for synchronized local playback, or turn it off for a silent radio host. The bottom media controls become the broadcast controls: **Previous**, **Pause/Resume**, **Next**, and **Stop** affect every listener. Pause freezes the current position; resume re-buffers from that point. These controls also work when the host is silent. Shuffle chooses one order for the session, making Previous/Next consistent across repeat cycles.
+
+While listening, the same bottom strip shows the incoming track and live position. **Pause** silences only your room; **Resume live** rejoins the live position. **Stop** leaves the broadcast. Previous/Next are reserved for the host, and a listener cannot resume a broadcast paused by its host. Volume and mute always affect only your own room. The Space key follows the active broadcast from any library page. 4. On another computer, choose the discovered station and **Join**. If discovery is blocked, copy the broadcaster's displayed LAN address and use **Join by address**. New listeners tune in to the current moment. 5. To bring rooms in from the broadcaster, select them under **Bring in more rooms**. An idle room with **Accept playback requests while idle** enabled joins automatically. Other idle rooms get a 60-second invitation to accept. Busy rooms keep their current session. Listeners can leave independently; the broadcaster can disconnect a listener. 6. Each room chooses its own audio output and volume. Stop its session to change outputs. **Timing adjustment** (-500 to +500 ms) compensates for additional speaker/receiver latency; positive values delay that room. The visualizer follows the native audio being played in that room.
 
 The implementation sends 48 kHz, stereo, 16-bit PCM in timestamped chunks with approximately 1.2 seconds of lookahead. Clients estimate clock offset and render against predicted device playback time to compensate drift. This uses about **1.54 Mbit/s per listener**, plus transport overhead. A lost listener connection retries for up to 30 seconds. Actual room-to-room acoustic alignment still requires testing on your Mac/Windows devices, particularly Bluetooth outputs with hidden latency.
 
@@ -124,6 +125,79 @@ This is a deliberate test-release backend, with a separate native-player evaluat
 Jellyfin is direct-play only. The app does not request server transcoding yet, does not persist server sessions across restarts, and does not edit remote metadata or favorites. Local progress is durable; failed remote progress requests currently require another successful playback checkpoint rather than a durable retry queue. A real server is required to qualify the integration against your server's version and codecs.
 
 Online movie/poster enrichment, AcoustID fingerprinting, lyric providers, artwork editing, arbitrary smart-playlist rules, iTunes XML import, WMP `.wmz` import, projectM, a separate floating video window, and Linux qualification remain planned work. Metadata writes are enabled only for MP3/FLAC files whose tag data can be preserved; specialized frames may require library-only edits. Batch writes report per-file failures rather than claiming the whole batch succeeded.
+
+## Install from GitHub
+
+The installers build the official `main` branch locally. They install missing build dependencies, fetch the repository into a managed folder, verify the selected commit belongs to `main`, build with the locked Rust and npm dependencies, and install the finished application. The first build can take several minutes and needs a few GB of free space and an Internet connection. Run as your normal user; platform installers may request administrator approval for system build tools.
+
+**Private repository:** raw GitHub download links require repository access. If you cannot download the script while signed out, download it from GitHub while signed in, or use an authenticated checkout (`gh auth login`, `gh auth setup-git`, then `gh repo clone ooberguts/Elysium`). Run the relevant script from its `scripts` folder. Git needs credentials with read access for both installation and future updates; Elysium does not ask you to save a GitHub token in the app. On Windows, Git Credential Manager can also open a sign-in window during the first clone.
+
+### macOS
+
+Requires **macOS 13.5+** on Apple Silicon or Intel to run the Node.js build tools. In Terminal, from a downloaded/authenticated checkout:
+
+```sh
+bash scripts/install-macos.sh
+```
+
+For a repository accessible without authentication, download and run the installer directly:
+
+```sh
+installer="$(mktemp -t elysium-install)"
+curl --fail --location --retry 3 https://raw.githubusercontent.com/ooberguts/Elysium/main/scripts/install-macos.sh -o "$installer" && bash "$installer"
+rm -f "$installer"
+```
+
+The script opens Apple's Command Line Tools installer if needed and waits for you to finish it. It installs a private, checksum-verified Node.js 24 toolchain if your Node is missing or too old, and installs/updates Rust stable through rustup. It builds and verifies the locally signed application before replacing an existing copy, then opens Elysium.
+
+- Installed app: `~/Applications/Elysium.app`.
+- Managed checkout: `~/Library/Application Support/Elysium/source/`.
+- Private Node toolchain and install logs: `~/Library/Application Support/Elysium/tools/` and `logs/`.
+- Override the app location with `--app-dir /Applications` if you can write there, or the managed folder with `--root /absolute/path`. Use `--no-launch` to skip opening the installed app.
+
+### Windows
+
+Requires **Windows 10/11 x64** and 64-bit PowerShell 5.1 or newer. From a downloaded/authenticated checkout, run in PowerShell:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
+```
+
+For a repository accessible without authentication:
+
+```powershell
+$installer = Join-Path ([IO.Path]::GetTempPath()) ('elysium-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
+Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/ooberguts/Elysium/main/scripts/install-windows.ps1 -OutFile $installer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+Remove-Item $installer
+```
+
+The script installs missing Git and Visual Studio C++ Build Tools/Windows SDK using WinGet, bootstraps WinGet if missing, installs a private checksum-verified Node.js 24 toolchain if needed, and installs/updates Rust stable with the MSVC toolchain. The Windows installer installs WebView2 when needed, creates the normal app/uninstall entries, and opens Elysium. If a system tool requests a restart, restart Windows and rerun the script.
+
+- Installed app: `%LOCALAPPDATA%\Programs\Elysium\`.
+- Managed checkout: `%LOCALAPPDATA%\Elysium\source\`.
+- Private Node toolchain and logs: `%LOCALAPPDATA%\Elysium\tools\` and `logs\`.
+- Override locations with `-AppDir C:\path\Elysium` or `-Root C:\path\Elysium-build`. Use `-NoLaunch` to skip opening the installed app.
+
+### Versions and updates
+
+The **Git commit is the build version**. Elysium shows its 12-character commit in the header and in **Preferences → Updates**; hovering the commit shows the full 40-character SHA, and Preferences links to that commit on GitHub. The package's base version (currently `0.2.0`) remains available alongside it. Builds with uncommitted files show **Local changes** so they cannot be mistaken for the published commit.
+
+Startup checks are enabled by default and can be switched off in Preferences. **Check for updates** compares the full installed SHA with GitHub `main`; a different SHA displays an Update badge beside Preferences. **Install <commit>** opens Terminal/PowerShell and runs the installer embedded in the installed executable, pinned to the commit you checked. It builds while Elysium stays open; when the terminal says the build is ready, quit Elysium to finish. The installer installs to the current app folder and reopens it. This is a source-build update, so it can install missing build tools and needs the same repository access as the initial installation.
+
+Checks use GitHub's API, falling back to Git's configured credentials for a private repository or API rate limits. Network/authentication failures appear in Preferences and leave the installed app in place. Development builds, unknown-source builds, and builds with local changes can check versions but cannot launch an app update. A failed installer leaves a log in the folder above; correct the issue and reopen Elysium to retry. The managed checkout must be clean, and another installer cannot run concurrently. Library data stays in the separate [application-data folder](#data-and-recovery).
+
+To install a particular historical commit from `main`, supply its full SHA:
+
+```sh
+bash scripts/install-macos.sh --commit FULL_40_CHARACTER_SHA
+```
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Commit FULL_40_CHARACTER_SHA
+```
+
+The macOS installer stages and verifies the replacement beside the destination and restores the previous app if the final move fails. Windows builds the new NSIS installer before starting installation. A small `.elysium-install.json` beside the installed app records a custom managed folder so app updates reuse it. Neither installer resets or discards edits in its managed checkout. Do development work in a separate checkout.
 
 ## Run from source
 

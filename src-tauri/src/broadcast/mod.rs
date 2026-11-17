@@ -233,11 +233,13 @@ impl Node {
         let listening = self.client.lock().unwrap().as_ref().map(|client| {
             let mut v = client.view.lock().unwrap().clone();
             v.active = client.alive.load(Ordering::Acquire);
-            v.position = ((client.sink.now()
-                - client.sink.delay_us.load(Ordering::Relaxed)
-                - client.track_at.load(Ordering::Relaxed))
-            .max(0) as f64)
-                / 1e6;
+            if v.phase != "paused" {
+                v.position = ((client.sink.now()
+                    - client.sink.delay_us.load(Ordering::Relaxed)
+                    - client.track_at.load(Ordering::Relaxed))
+                .max(0) as f64)
+                    / 1e6;
+            }
             let error = client.sink.error.lock().unwrap().clone();
             if !error.is_empty() {
                 v.message = error;
@@ -286,7 +288,8 @@ impl Node {
                                 .scheduled_tracks(self.now())
                                 .first()
                                 .map(|(_, at)| *at + self.delay_ms.load(Ordering::Relaxed) * 1000)
-                                .unwrap_or(i64::MAX),
+                                .unwrap_or(i64::MAX)
+                            && !s.paused,
                     )
                 })
             })
@@ -677,10 +680,40 @@ pub async fn broadcast_next(state: tauri::State<'_, BroadcastState>) -> Result<(
     let node = get_node(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
         if let Some(s) = node.station.lock().unwrap().as_ref() {
-            s.skip.fetch_add(1, Ordering::AcqRel);
-            s.stop_child();
+            s.navigate(1)?;
+        }
+        node.advertise();
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn broadcast_previous(state: tauri::State<'_, BroadcastState>) -> Result<(), String> {
+    let node = get_node(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Some(station) = node.station.lock().unwrap().as_ref() {
+            station.navigate(-1)?;
         }
         Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn broadcast_pause(
+    state: tauri::State<'_, BroadcastState>,
+    paused: bool,
+) -> Result<(), String> {
+    let node = get_node(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let station = node
+            .station
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Start a broadcast first")?;
+        station.pause(paused)
     })
     .await
     .map_err(|e| e.to_string())?

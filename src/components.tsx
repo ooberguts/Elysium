@@ -132,6 +132,8 @@ export function TrackTable({
   rate,
   ratingBusy,
   contextMenu,
+  openArtist,
+  openAlbum,
 }: {
   items: MediaItem[];
   selected: Set<string>;
@@ -145,6 +147,8 @@ export function TrackTable({
   rate: (item: MediaItem, rating: number) => void;
   ratingBusy: ReadonlySet<string>;
   contextMenu: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
+  openArtist?: (artist: string) => void;
+  openAlbum?: (item: MediaItem) => void;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -212,8 +216,36 @@ export function TrackTable({
                   <span>{item.title}</span>
                   {!item.available && <small>Offline</small>}
                 </span>
-                <span role="cell">{item.artist || 'Unknown artist'}</span>
-                <span role="cell">{item.album || '—'}</span>
+                <span role="cell">
+                  {openArtist ? (
+                    <button
+                      className="artist-link"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openArtist(item.artist || item.albumArtist || 'Unknown artist');
+                      }}
+                    >
+                      {item.artist || item.albumArtist || 'Unknown artist'}
+                    </button>
+                  ) : (
+                    item.artist || 'Unknown artist'
+                  )}
+                </span>
+                <span role="cell">
+                  {openAlbum && item.kind === 'music' ? (
+                    <button
+                      className="artist-link"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openAlbum(item);
+                      }}
+                    >
+                      {item.album || 'Untitled album'}
+                    </button>
+                  ) : (
+                    item.album || '—'
+                  )}
+                </span>
                 <span className="track-rating" role="cell">
                   <Rating
                     item={item}

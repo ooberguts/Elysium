@@ -190,8 +190,14 @@ fn accept(node: Arc<Node>, mut socket: TcpStream, remote: SocketAddr) -> std::io
                 });
                 subscribers.insert(connection.clone(), sub);
             }
+            let view = station.snapshot(node.now());
             for (track, at) in station.scheduled_tracks(node.now()) {
-                let _ = tx.try_send(Packet::Control(Control::NowPlaying { track, at }));
+                let _ = tx.try_send(Packet::Control(Control::NowPlaying {
+                    track,
+                    at,
+                    paused: view.paused,
+                    position: view.position,
+                }));
             }
             let mut writer = socket.try_clone()?;
             let writer_node = node.clone();
@@ -361,7 +367,7 @@ fn join_if_idle(node: Arc<Node>, mut request: JoinRequest, idle_only: bool) -> R
     std::thread::spawn(move || listen(worker_node, client, request, socket));
     Ok(())
 }
-fn listen(node: Arc<Node>, client: Arc<Client>, request: JoinRequest, first: TcpStream) {
+pub(super) fn listen(node: Arc<Node>, client: Arc<Client>, request: JoinRequest, first: TcpStream) {
     let _awake = super::power::Awake::new();
     let mut connection = Some(first);
     let mut reconnect_since: Option<Instant> = None;
@@ -455,13 +461,27 @@ fn listen(node: Arc<Node>, client: Arc<Client>, request: JoinRequest, first: Tcp
                     view.track = None;
                     view.phase = "buffering".into();
                 }
-                Ok(Packet::Control(Control::NowPlaying { track, at })) => {
+                Ok(Packet::Control(Control::NowPlaying {
+                    track,
+                    at,
+                    paused,
+                    position,
+                })) => {
                     {
                         let mut view = client.view.lock().unwrap();
+                        if paused {
+                            view.track = Some(track.clone());
+                            view.position = position;
+                            view.phase = "paused".into();
+                            reconnect_since = None;
+                        }
                         if view.track.is_none() {
                             view.track = Some(track.clone());
                             client.track_at.store(at, Ordering::Relaxed);
                         }
+                    }
+                    if paused {
+                        continue;
                     }
                     if pending_tracks.len() >= 256 {
                         pending_tracks.pop_front();

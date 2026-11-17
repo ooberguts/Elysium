@@ -68,6 +68,7 @@ pub struct StationView {
     pub id: String,
     pub name: String,
     pub active: bool,
+    pub paused: bool,
     pub track: Option<Track>,
     pub position: f64,
     pub elapsed: f64,
@@ -105,6 +106,7 @@ pub struct Station {
     pub alive: AtomicBool,
     pub epoch: AtomicU64,
     pub skip: AtomicU64,
+    pub transport: Mutex<Transport>,
     pub subscribers: Mutex<HashMap<String, Subscriber>>,
     pub sink: Option<Arc<Sink>>,
     pub blocked: Mutex<HashSet<String>>,
@@ -118,7 +120,87 @@ pub struct Station {
     pub book_progress: Mutex<VecDeque<BookCheckpoint>>,
     pub origin: std::time::Instant,
 }
+#[derive(Default)]
+pub struct Transport {
+    paused: bool,
+    pending: Option<PlaybackRequest>,
+    frozen: Option<StationView>,
+    elapsed_floor: f64,
+}
+struct PlaybackRequest {
+    index: usize,
+    position: f64,
+    elapsed: f64,
+}
 impl Station {
+    pub fn pause(&self, paused: bool) -> Result<(), String> {
+        let now = self.origin.elapsed().as_micros() as i64;
+        let mut view = self.snapshot(now);
+        let track = view
+            .track
+            .clone()
+            .ok_or("The broadcast is still preparing")?;
+        let mut transport = self.transport.lock().unwrap();
+        if !self.alive.load(Ordering::Acquire) {
+            return Err("This broadcast has ended".into());
+        }
+        if transport.paused == paused {
+            return Ok(());
+        }
+        if paused {
+            transport.pending = Some(PlaybackRequest {
+                index: track.index,
+                position: track.start_position + view.position,
+                elapsed: view.elapsed,
+            });
+            view.paused = true;
+            transport.frozen = Some(view.clone());
+        }
+        transport.paused = paused;
+        self.skip.fetch_add(1, Ordering::AcqRel);
+        self.stop_child();
+        reset(self);
+        if paused {
+            let at = now - (view.position * 1e6) as i64;
+            self.tracks.lock().unwrap().push_back((track.clone(), at));
+            self.emit(Packet::Control(Control::NowPlaying {
+                track,
+                at,
+                paused: true,
+                position: view.position,
+            }));
+        }
+        Ok(())
+    }
+    pub fn navigate(&self, direction: i32) -> Result<(), String> {
+        let view = self.snapshot(self.origin.elapsed().as_micros() as i64);
+        let track = view.track.ok_or("The broadcast is still preparing")?;
+        if direction > 0 && track.index + 1 >= track.total && view.mode == "once" {
+            self.stop("Broadcast finished");
+            return Ok(());
+        }
+        let index = if direction > 0 {
+            (track.index + 1) % track.total.max(1)
+        } else if track.index > 0 {
+            track.index - 1
+        } else if view.mode == "repeat" {
+            track.total.saturating_sub(1)
+        } else {
+            0
+        };
+        let mut transport = self.transport.lock().unwrap();
+        transport.paused = false;
+        transport.frozen = None;
+        transport.pending = Some(PlaybackRequest {
+            index,
+            position: 0.,
+            elapsed: view.elapsed,
+        });
+        self.skip.fetch_add(1, Ordering::AcqRel);
+        self.stop_child();
+        reset(self);
+        Ok(())
+    }
     pub fn save_book_progress(&self, now: i64) {
         let Some(store) = &self.progress_store else {
             return;
@@ -211,12 +293,24 @@ impl Station {
         }
         tracks.push_back((track.clone(), at));
         drop(tracks);
-        self.emit(Packet::Control(Control::NowPlaying { track, at }));
+        self.emit(Packet::Control(Control::NowPlaying {
+            track,
+            at,
+            paused: false,
+            position: 0.,
+        }));
     }
     pub fn snapshot(&self, now: i64) -> StationView {
+        let transport = self.transport.lock().unwrap();
+        if let Some(frozen) = transport.frozen.as_ref().filter(|_| transport.paused) {
+            let mut view = frozen.clone();
+            view.active = self.alive.load(Ordering::Acquire);
+            return view;
+        }
         let mut view = self.view.lock().unwrap().clone();
         view.active = self.alive.load(Ordering::Acquire);
         view.elapsed = ((now - self.started.load(Ordering::Relaxed) as i64).max(0) as f64) / 1e6;
+        view.elapsed = view.elapsed.max(transport.elapsed_floor);
         let tracks = self.scheduled_tracks(now);
         view.track = tracks.first().map(|(track, _)| track.clone());
         view.position = tracks
@@ -269,6 +363,7 @@ pub fn launch(
         alive: AtomicBool::new(true),
         epoch: AtomicU64::new(1),
         skip: AtomicU64::new(0),
+        transport: Mutex::new(Transport::default()),
         subscribers: Mutex::new(HashMap::new()),
         sink: sink.as_ref().map(|s| s.0.clone()),
         child: Mutex::new(None),
@@ -329,23 +424,61 @@ fn produce(
     let mut failures = 0;
     let mut observed_skip = 0;
     let mut base = node.now() + station.lookahead;
+    let mut requested_offset = None;
     station.started.store(base as u64, Ordering::Relaxed);
     if request.shuffle {
         shuffle(&mut items);
     }
-    while node.alive.load(Ordering::Acquire)
-        && station.alive.load(Ordering::Acquire)
-        && request.can_start_track(completed, total_frames)
-    {
-        if cycle_index == items.len() {
-            cycle_index = 0;
-            if request.shuffle {
-                shuffle(&mut items);
+    'playback: while node.alive.load(Ordering::Acquire) && station.alive.load(Ordering::Acquire) {
+        {
+            let mut transport = station.transport.lock().unwrap();
+            if transport.paused {
+                drop(transport);
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            if station.skip.load(Ordering::Acquire) != observed_skip {
+                observed_skip = station.skip.load(Ordering::Acquire);
+                if let Some(pending) = transport.pending.take() {
+                    transport.elapsed_floor = pending.elapsed;
+                    cycle_index = pending.index.min(items.len() - 1);
+                    if request.mode == "once" {
+                        completed = cycle_index;
+                    }
+                    total_frames = (pending.elapsed.max(0.) * RATE as f64) as u64;
+                    requested_offset = Some(pending.position);
+                }
+                transport.frozen = None;
+                base = node.now() + station.lookahead
+                    - (total_frames * 1_000_000 / RATE as u64) as i64;
+                station.started.store(base.max(0) as u64, Ordering::Relaxed);
+                reset(&station);
             }
         }
+        if !request.can_start_track(completed, total_frames) {
+            let end = base + (total_frames * 1_000_000 / RATE as u64) as i64;
+            while node.alive.load(Ordering::Acquire)
+                && station.alive.load(Ordering::Acquire)
+                && node.now() < end + 50_000
+            {
+                if station.skip.load(Ordering::Acquire) != observed_skip {
+                    continue 'playback;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            // A pause/skip can arrive between the last sleep and the end check.
+            if station.skip.load(Ordering::Acquire) != observed_skip {
+                continue;
+            }
+            break;
+        }
+        if cycle_index == items.len() {
+            cycle_index = 0;
+        }
         let item = &items[cycle_index];
-        let offset = if item.kind == "audiobook" && request.resume_books && completed < items.len()
-        {
+        let offset = if let Some(position) = requested_offset.take() {
+            position.max(0.).min((item.duration - 0.1).max(0.))
+        } else if item.kind == "audiobook" && request.resume_books && completed < items.len() {
             item.resume.max(0.).min((item.duration - 0.1).max(0.))
         } else {
             0.
@@ -372,9 +505,11 @@ fn produce(
                 *station.child.lock().unwrap() = Some(child);
                 let started = std::time::Instant::now();
                 loop {
-                    if !station.alive.load(Ordering::Acquire) {
+                    if !station.alive.load(Ordering::Acquire)
+                        || station.skip.load(Ordering::Acquire) != observed_skip
+                    {
                         station.stop_child();
-                        return;
+                        continue 'playback;
                     }
                     let result = station
                         .child
@@ -416,6 +551,10 @@ fn produce(
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null());
+        let transport = station.transport.lock().unwrap();
+        if transport.paused || station.skip.load(Ordering::Acquire) != observed_skip {
+            continue;
+        }
         let child = command.spawn();
         let mut track_frames = 0u64;
         if let Ok(mut child) = child {
@@ -470,6 +609,7 @@ fn produce(
                         end: None,
                     });
             }
+            drop(transport);
             let mut empty_polls = 0;
             loop {
                 if !node.alive.load(Ordering::Acquire)
@@ -513,6 +653,10 @@ fn produce(
                     || !station.alive.load(Ordering::Acquire)
                     || station.skip.load(Ordering::Acquire) != observed_skip
                 {
+                    break;
+                }
+                let transport = station.transport.lock().unwrap();
+                if transport.paused || station.skip.load(Ordering::Acquire) != observed_skip {
                     break;
                 }
                 // If a decoder stalls beyond the lookahead, move every room onto
@@ -564,6 +708,9 @@ fn produce(
             }
             station.stop_child();
         }
+        if station.skip.load(Ordering::Acquire) != observed_skip {
+            continue;
+        }
         if track_frames == 0 {
             failures += 1;
             let mut view = station.view.lock().unwrap();
@@ -577,21 +724,8 @@ fn produce(
             node.advertise();
             return;
         }
-        let skip = station.skip.load(Ordering::Acquire);
-        if skip != observed_skip {
-            observed_skip = skip;
-            reset(&station);
-            base = node.now() + station.lookahead - (total_frames * 1_000_000 / RATE as u64) as i64;
-        }
         completed += 1;
         cycle_index += 1;
-    }
-    let end = base + (total_frames * 1_000_000 / RATE as u64) as i64;
-    while node.alive.load(Ordering::Acquire)
-        && station.alive.load(Ordering::Acquire)
-        && node.now() < end + 50_000
-    {
-        std::thread::sleep(Duration::from_millis(20));
     }
     if station.alive.load(Ordering::Acquire) {
         station.stop("Broadcast finished");

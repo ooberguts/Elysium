@@ -30,6 +30,9 @@ export function playlistItems(
 }
 
 export function viewItems(view: View, library: Library, all: MediaItem[]): MediaItem[] {
+  if (view.startsWith('artist:')) return artistItems(all, view.slice(7));
+  if (view.startsWith('album:'))
+    return all.filter((i) => i.kind === 'music' && albumKey(i) === view.slice(6));
   if (view.startsWith('playlist:')) {
     const p = library.playlists.find((p) => p.id === view.slice(9));
     return p ? playlistItems(p, all) : [];
@@ -52,6 +55,16 @@ export function viewItems(view: View, library: Library, all: MediaItem[]): Media
     default:
       return all;
   }
+}
+
+export function artistItems(items: MediaItem[], artist: string): MediaItem[] {
+  return items.filter(
+    (item) =>
+      item.kind === 'music' &&
+      (item.artist === artist ||
+        item.albumArtist === artist ||
+        (artist === 'Unknown artist' && !item.artist && !item.albumArtist)),
+  );
 }
 
 export function filterItems(

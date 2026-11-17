@@ -1,0 +1,77 @@
+.update-badge {
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 4px;
+  color: var(--accent);
+  background: var(--surface);
+  font-size: 10px;
+}
+.build-version {
+  margin: 0 0 20px;
+  font-size: 12px;
+}
+.build-version > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 16px;
+  margin: 10px 0;
+}
+.build-version dt {
+  color: var(--muted);
+  min-width: 110px;
+}
+.build-version dd {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+}
+.build-version a {
+  color: var(--accent);
+  text-underline-offset: 3px;
+}
+.local-build {
+  color: var(--muted);
+}
+.update-status {
+  display: grid;
+  gap: 7px;
+  margin: 18px 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.update-status span,
+.update-status small {
+  color: var(--muted);
+}
+.settings-view section > p.update-error {
+  color: var(--danger, #b53a44);
+  overflow-wrap: anywhere;
+}
+.settings-view section > p.update-handoff {
+  padding: 12px;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  line-height: 1.6;
+}
+.settings-view section > p.update-note {
+  margin-top: 16px;
+  line-height: 1.6;
+}
+.app-updates .settings-actions {
+  flex-wrap: wrap;
+}
+.update-spinning {
+  animation: update-spin 1s linear infinite;
+}
+@keyframes update-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-spinning {
+    animation: none;
+  }
+}
