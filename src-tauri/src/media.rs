@@ -127,7 +127,9 @@ fn read_media_inner(
         } else {
             "music"
         }
-    } else if source.is_some_and(|s| s.kind == "tv") || episode > 0 {
+    } else if source.is_some_and(|s| s.kind == "tv")
+        || (episode > 0 && !source.is_some_and(|s| s.kind == "movie"))
+    {
         "tv"
     } else {
         "movie"
@@ -268,6 +270,9 @@ fn read_media_inner(
             }
         }
     }
+    if item.artwork.is_none() && VIDEO.contains(&ext.as_str()) {
+        item.artwork = video_thumbnail(store, &canonical, &meta, item.duration);
+    }
     let existing = store
         .item(&item.id)
         .ok()
@@ -282,7 +287,9 @@ fn read_media_inner(
                 item.source_id = existing.source_id;
                 item.relative_path = existing.relative_path;
             }
-            if existing.kind == "audiobook" {
+            if existing.kind == "audiobook"
+                && source.is_none_or(|s| s.kind == "mixed" || s.kind == "audiobook")
+            {
                 item.kind = existing.kind;
             }
             item.favorite = existing.favorite;
@@ -301,6 +308,75 @@ fn read_media_inner(
     }
     let _ = meta;
     Ok(item)
+}
+
+fn video_thumbnail(
+    store: &Store,
+    path: &Path,
+    metadata: &std::fs::Metadata,
+    duration: f64,
+) -> Option<String> {
+    if !store.ffmpeg.is_file() {
+        return None;
+    }
+    let modified = metadata
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let key = digest(format!(
+        "{}:{}:{}",
+        path.display(),
+        metadata.len(),
+        modified
+    ));
+    let target = store
+        .data_dir
+        .join("artwork")
+        .join(format!("video-{key}.jpg"));
+    if target.is_file() {
+        return Some(target.to_string_lossy().into_owned());
+    }
+    let temp = store
+        .data_dir
+        .join("artwork")
+        .join(format!("thumbnail-{}.jpg", uuid::Uuid::new_v4()));
+    let position = if duration > 0. {
+        (duration * 0.1).min(60.)
+    } else {
+        0.
+    };
+    let extract = |at: f64| {
+        hidden_command(&store.ffmpeg)
+            .args(["-nostdin", "-v", "error", "-ss", &at.to_string(), "-i"])
+            .arg(path)
+            .args([
+                "-map",
+                "0:v:0",
+                "-frames:v",
+                "1",
+                "-vf",
+                "scale=640:-2:force_original_aspect_ratio=decrease",
+                "-q:v",
+                "4",
+                "-update",
+                "1",
+                "-y",
+            ])
+            .arg(&temp)
+            .output()
+            .is_ok_and(|result| {
+                result.status.success() && temp.metadata().is_ok_and(|m| m.len() > 0)
+            })
+    };
+    let success = extract(position) || (position > 0. && extract(0.));
+    if success && std::fs::rename(&temp, &target).is_ok() {
+        Some(target.to_string_lossy().into_owned())
+    } else {
+        let _ = std::fs::remove_file(temp);
+        None
+    }
 }
 
 pub fn apply_overrides(item: &mut MediaItem) {
@@ -366,6 +442,23 @@ pub fn scan(store: &Store, app: &tauri::AppHandle, source_id: &str) -> Result<Sc
         }
         let ext = extension(entry.path());
         if !AUDIO.contains(&ext.as_str()) && !VIDEO.contains(&ext.as_str()) {
+            continue;
+        }
+        let is_audio = AUDIO.contains(&ext.as_str());
+        if (matches!(source.kind.as_str(), "music" | "audiobook") && !is_audio)
+            || (matches!(source.kind.as_str(), "movie" | "tv") && is_audio)
+        {
+            continue;
+        }
+        let canonical = match std::fs::canonicalize(entry.path()) {
+            Ok(path) => path,
+            Err(_) => {
+                skipped += 1;
+                complete = false;
+                continue;
+            }
+        };
+        if store.is_excluded(&canonical.to_string_lossy())? {
             continue;
         }
         match read_media(store, entry.path(), Some(&source)) {
@@ -539,6 +632,41 @@ mod tests {
     fn content_identity_is_deterministic() {
         assert_eq!(digest("x"), digest("x"));
         assert_ne!(digest("x"), digest("y"));
+    }
+    #[test]
+    fn video_thumbnails_are_cached_and_supplied_art_takes_precedence() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("film.mp4");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/demo/The Aurora Study.mp4"),
+            &path,
+        )
+        .unwrap();
+        let ffmpeg = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "resources/bin/ffmpeg{}",
+            std::env::consts::EXE_SUFFIX
+        ));
+        if !ffmpeg.is_file() {
+            return;
+        }
+        let store = Store::new(temp.path().join("data"), ffmpeg).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let item = read_media(&store, &path, None).unwrap();
+        let thumbnail = item.artwork.expect("video frame");
+        assert!(std::fs::read(&thumbnail)
+            .unwrap()
+            .starts_with(&[0xff, 0xd8]));
+        assert_eq!(
+            read_media(&store, &path, None).unwrap().artwork.as_deref(),
+            Some(thumbnail.as_str())
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let poster = temp.path().join("poster.jpg");
+        std::fs::write(&poster, b"supplied artwork").unwrap();
+        assert_eq!(
+            read_media(&store, &path, None).unwrap().artwork.as_deref(),
+            std::fs::canonicalize(poster).unwrap().to_str()
+        );
     }
     #[test]
     fn reimporting_a_loose_file_into_a_source_preserves_its_identity() {

@@ -1,4 +1,4 @@
-import { Heart, Info, ListPlus, Play } from 'lucide-react';
+import { Heart, ImagePlus, Info, ListPlus, Play } from 'lucide-react';
 import { Artwork, Rating } from './components';
 import { albumGroups, filterItems, seconds } from './domain';
 import type { MediaItem } from './types';
@@ -14,6 +14,9 @@ export function collectionAlbums(items: MediaItem[]) {
 
 export function CollectionPage({
   artist,
+  artistImage,
+  chooseArtistImage,
+  removeArtistImage,
   items,
   query,
   selected,
@@ -30,6 +33,9 @@ export function CollectionPage({
   openAlbum,
 }: {
   artist?: string;
+  artistImage?: string;
+  chooseArtistImage: (artist: string) => void;
+  removeArtistImage: (artist: string) => void;
   items: MediaItem[];
   query: string;
   selected: Set<string>;
@@ -63,7 +69,11 @@ export function CollectionPage({
   return (
     <div className={`collection-page ${artist ? 'artist-page' : 'album-page'}`}>
       <header className="collection-hero">
-        <Artwork item={first} label={name} />
+        <Artwork
+          item={artist ? items.find((item) => item.artwork) || first : first}
+          image={artist ? artistImage : undefined}
+          label={name}
+        />
         <div>
           <p className="eyebrow">{artist ? 'ARTIST · IN YOUR LIBRARY' : 'ALBUM'}</p>
           <h1>{name}</h1>
@@ -98,6 +108,17 @@ export function CollectionPage({
               <ListPlus size={17} />
               Add to queue
             </button>
+            {artist && (
+              <>
+                <button onClick={() => chooseArtistImage(artist)}>
+                  <ImagePlus size={17} />{' '}
+                  {artistImage ? 'Change artist image' : 'Choose artist image'}
+                </button>
+                {artistImage && (
+                  <button onClick={() => removeArtistImage(artist)}>Use album artwork</button>
+                )}
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -148,6 +169,14 @@ export function CollectionPage({
                   className={`${currentId === item.id ? 'current' : ''} ${selected.has(item.id) ? 'selected' : ''} ${!item.available ? 'unavailable' : ''}`}
                   tabIndex={0}
                   aria-selected={selected.has(item.id)}
+                  draggable
+                  onDragStart={(event) => {
+                    const ids = selected.has(item.id)
+                      ? visibleItems.filter((song) => selected.has(song.id)).map((song) => song.id)
+                      : [item.id];
+                    event.dataTransfer.setData('application/elysium-items', JSON.stringify(ids));
+                    event.dataTransfer.effectAllowed = 'copy';
+                  }}
                   onClick={(event) => select(item, event, visibleItems)}
                   onDoubleClick={() => play(item, album.items)}
                   onContextMenu={(event) => contextMenu(item, event)}

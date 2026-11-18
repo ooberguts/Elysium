@@ -229,18 +229,6 @@ textarea:focus-visible {
   box-shadow: 0 1px 4px #173b2517;
   color: var(--accent);
 }
-.column-browser {
-  background: var(--subtle);
-  border-bottom-color: var(--line-soft);
-  height: 138px;
-}
-.column-browser > div {
-  border-color: var(--line-soft);
-}
-.column-label {
-  font-size: 9px;
-  padding: 2px 14px 7px;
-}
 .track-header {
   background: var(--subtle);
   color: var(--muted);
@@ -1323,4 +1311,15 @@ meter::-webkit-meter-optimum-value {
   padding: 14px 22px;
   background: var(--surface);
   border-top: 1px solid var(--line);
+}
+
+/* Let the picture use the whole screen while its controls float above it. */
+.theater-mode .video-stage .stage-top {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 3;
+  background: linear-gradient(#000a, transparent);
+}
+.theater-mode .video-stage video {
+  height: 100%;
 }

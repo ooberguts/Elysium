@@ -10,7 +10,6 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  Columns3,
   Download,
   Film,
   FolderOpen,
@@ -159,13 +158,9 @@ export default function App() {
   const [library, setLibrary] = useState<Library>(EMPTY_LIBRARY),
     [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState(''),
-    [genre, setGenre] = useState(''),
-    [artist, setArtist] = useState(''),
-    [album, setAlbum] = useState(''),
     [series, setSeries] = useState('');
   const [theme, setTheme] = useState('silver'),
     [compact, setCompact] = useState(false),
-    [browser, setBrowser] = useState(true),
     [grid, setGrid] = useState(false),
     [sort, setSort] = useState('title');
   const [mini, setMini] = useState(false),
@@ -215,6 +210,21 @@ export default function App() {
     const data = await loadLibrary();
     setLibrary(data);
   }, []);
+  const artistArtwork = useMemo<Record<string, string>>(() => {
+    try {
+      const value: unknown = JSON.parse(library.settings.artistArtwork || '{}');
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+      return Object.fromEntries(
+        Object.entries(value).filter(
+          (entry): entry is [string, string] => typeof entry[1] === 'string',
+        ),
+      );
+    } catch {
+      return {};
+    }
+  }, [library.settings.artistArtwork]);
+  const artistImage = (name: string) =>
+    Object.hasOwn(artistArtwork, name) ? artistArtwork[name] : undefined;
   const allItems = useMemo(
     () => [
       ...library.items.map((i) => ({
@@ -254,9 +264,8 @@ export default function App() {
   useEffect(() => {
     if (broadcast.active && playback.playing) {
       player.pause();
-      notify('Stop LAN broadcast before playing another library item.');
     }
-  }, [broadcast.active, playback.playing, player.pause, notify]);
+  }, [broadcast.active, playback.playing, player.pause]);
   useEffect(() => {
     if (broadcast.state.enabled)
       void native('broadcast_activity', { busy: playback.playing || capture.running }).catch(
@@ -266,6 +275,47 @@ export default function App() {
   async function prepareBroadcast() {
     await player.stop();
     await capture.stop();
+  }
+  async function broadcastCurrent() {
+    if (!current || current.serverId || !current.available) return;
+    const wasPlaying = playback.playing;
+    let pausedForHandoff = false;
+    const remaining = playback.queue
+      .slice(Math.max(0, playback.index))
+      .filter((id) => library.items.some((item) => item.id === id && item.available));
+    const itemIds =
+      remaining[0] === current.id
+        ? remaining
+        : [current.id, ...remaining.filter((id) => id !== current.id)];
+    try {
+      if (!broadcast.state.enabled)
+        await broadcast.call('broadcast_enable', {
+          name: library.settings.lanRoomName || 'This computer',
+        });
+      const position = player.element()?.currentTime ?? playback.position;
+      player.pause();
+      pausedForHandoff = true;
+      await capture.stop();
+      await broadcast.call('broadcast_start', {
+        request: {
+          name: Array.from(current.title).slice(0, 80).join('') || 'Now playing',
+          itemIds,
+          mode: 'once',
+          minutes: 60,
+          finishTrack: true,
+          resumeBooks: false,
+          startPosition: position,
+          shuffle: false,
+          playHere: true,
+          outputDevice: broadcast.state.outputDevice || null,
+        },
+      });
+      setVisualizerOnly(false);
+      setNowPlaying(true);
+      notify('Broadcast started. Other rooms can join from LAN broadcast.');
+    } catch {
+      if (wasPlaying && pausedForHandoff) void player.toggle();
+    }
   }
   const [showControls, setShowControls] = useState(true);
   useEffect(() => {
@@ -291,7 +341,7 @@ export default function App() {
   const musicStage =
     nowPlaying &&
     !broadcastVideoStage &&
-    (visualizerOnly || visualExternal || !current || isAudio(current));
+    (broadcast.active || visualizerOnly || visualExternal || !current || isAudio(current));
   const visualActive = broadcast.active
     ? broadcast.running
     : visualExternal
@@ -313,7 +363,7 @@ export default function App() {
   const selectedPlaylist = library.playlists.find((p) => view === `playlist:${p.id}`);
   const baseItems = useMemo(() => viewItems(view, library, allItems), [view, library, allItems]);
   const filtered = useMemo(() => {
-    const result = filterItems(baseItems, query, genre, artist, album).filter(
+    const result = filterItems(baseItems, query, '', '', '').filter(
       (i) => !series || i.series === series,
     );
     if (selectedPlaylist && !selectedPlaylist.rule && sort === 'playlist') return result;
@@ -328,7 +378,7 @@ export default function App() {
               ? b.rating - a.rating || a.title.localeCompare(b.title)
               : a.title.localeCompare(b.title),
     );
-  }, [baseItems, query, genre, artist, album, series, sort, selectedPlaylist]);
+  }, [baseItems, query, series, sort, selectedPlaylist]);
   const albums = useMemo(() => albumGroups(filtered.filter((i) => i.kind === 'music')), [filtered]);
   const artists = unique(
     filtered
@@ -336,21 +386,6 @@ export default function App() {
       .flatMap((i) =>
         [i.artist || i.albumArtist || 'Unknown artist', i.albumArtist].filter(Boolean),
       ),
-  );
-  const filteredGenres = unique(baseItems.map((i) => i.genre));
-  const filteredArtists = unique(
-    baseItems
-      .filter((i) => !genre || i.genre === genre)
-      .map((i) => i.albumArtist || i.artist || 'Unknown artist'),
-  );
-  const filteredAlbums = unique(
-    baseItems
-      .filter(
-        (i) =>
-          (!genre || i.genre === genre) &&
-          (!artist || (i.albumArtist || i.artist || 'Unknown artist') === artist),
-      )
-      .map((i) => i.album),
   );
   const infoItems = infoIds.flatMap((id) =>
     allItems.find((i) => i.id === id) ? [allItems.find((i) => i.id === id)!] : [],
@@ -374,9 +409,6 @@ export default function App() {
   const navigate = useCallback(
     (next: View) => {
       setView(next);
-      setGenre('');
-      setArtist('');
-      setAlbum('');
       setSeries('');
       setQuery('');
       setSelected(new Set());
@@ -393,9 +425,6 @@ export default function App() {
       ? baseItems[0]?.album || 'Untitled album'
       : '';
   const goBackOrForward = (direction: -1 | 1) => {
-    setGenre('');
-    setArtist('');
-    setAlbum('');
     setSeries('');
     setQuery('');
     setSelected(new Set());
@@ -413,9 +442,23 @@ export default function App() {
     void loadLibrary()
       .then((data) => {
         setLibrary(data);
+        if (
+          data.items.some(
+            (item) =>
+              (item.kind === 'movie' || item.kind === 'tv') &&
+              !item.artwork &&
+              item.available &&
+              !('artwork' in item.overrides),
+          )
+        ) {
+          void native<number>('fill_video_artwork')
+            .then((count) => {
+              if (count) void refresh();
+            })
+            .catch(() => {});
+        }
         setTheme(data.settings.theme || 'silver');
         setCompact(data.settings.compact === 'true');
-        setBrowser(data.settings.browser !== 'false');
         setVisualMode(getVisualizer(data.settings.visualMode).id);
         setVisualQuality(data.settings.visualQuality === 'high' ? 'high' : 'balanced');
         setVisualAuto(data.settings.visualAuto === 'true');
@@ -456,7 +499,6 @@ export default function App() {
         values: {
           theme,
           compact: String(compact),
-          browser: String(browser),
           visualMode,
           visualQuality,
           visualAuto: String(visualAuto),
@@ -471,7 +513,6 @@ export default function App() {
   }, [
     theme,
     compact,
-    browser,
     visualMode,
     visualQuality,
     visualAuto,
@@ -540,8 +581,16 @@ export default function App() {
         setSelected(new Set(filtered.map((i) => i.id)));
       }
       if (e.key === 'Escape') {
-        setTheater(false);
-        setNowPlaying(false);
+        if (theater && nowPlaying) {
+          if (desktop)
+            void getCurrentWindow()
+              .isFullscreen()
+              .then((full) => {
+                if (full) void getCurrentWindow().setFullscreen(false);
+              });
+          else if (document.fullscreenElement) void document.exitFullscreen();
+          setTheater(false);
+        } else setNowPlaying(false);
       }
       if (musicStage && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.key === 'ArrowRight') {
@@ -574,6 +623,7 @@ export default function App() {
     player,
     selected,
     nowPlaying,
+    theater,
     musicStage,
     broadcastVideoStage,
     broadcast,
@@ -619,6 +669,30 @@ export default function App() {
         `${result.cancelled ? 'Scan stopped' : 'Scan complete'} · ${result.imported} files${result.skipped ? ` · ${result.skipped} skipped` : ''}`,
       );
     });
+  }
+  async function chooseArtistImage(artist: string) {
+    try {
+      const path = await open({
+        multiple: false,
+        title: `Choose an image for ${artist}`,
+        filters: [{ name: 'Artist image', extensions: ['jpg', 'jpeg', 'png'] }],
+      });
+      if (typeof path !== 'string') return;
+      await native('set_artist_artwork', { artist, path });
+      await refresh();
+      notify(`Artist image updated for ${artist}`);
+    } catch (error) {
+      notify(String(error));
+    }
+  }
+  async function removeArtistImage(artist: string) {
+    try {
+      await native('set_artist_artwork', { artist, path: null });
+      await refresh();
+      notify(`Using album artwork for ${artist} when available`);
+    } catch (error) {
+      notify(String(error));
+    }
   }
   async function addSource(path: string, kind: string, name: string) {
     const source = await native<Source>('add_source', { path, kind, name });
@@ -731,7 +805,9 @@ export default function App() {
               menu.queueIndex !== undefined &&
               playback.queue[menu.queueIndex] === menu.items[0].id
             )
-              void player.jump(menu.queueIndex);
+              broadcast.active
+                ? play(menu.items[0], menu.items)
+                : void player.jump(menu.queueIndex);
             else play(menu.items[0], menu.items);
           },
           disabled: !menu.items[0].available,
@@ -795,6 +871,15 @@ export default function App() {
           run: () => setContextMenu({ ...menu, ratings: true }),
         },
         {
+          label:
+            menu.items.length === 1
+              ? 'Remove from library…'
+              : `Remove ${menu.items.length} items from library…`,
+          disabled: !local,
+          divider: true,
+          run: () => void removeFromLibrary(menu.items),
+        },
+        {
           label: 'Select all visible items',
           divider: true,
           run: () => setSelected(new Set(filtered.map((i) => i.id))),
@@ -856,8 +941,36 @@ export default function App() {
     if (!event.shiftKey) selectedAnchor.current = index;
   }
   function play(item: MediaItem, collection = filtered) {
-    if (broadcast.active) {
-      notify('Stop LAN broadcast before playing another library item.');
+    if (broadcast.state.station?.active) {
+      if (item.serverId) {
+        notify('Broadcasting items from a connected server is not supported yet.');
+        return;
+      }
+      if (!item.available) {
+        notify('Reconnect this source to play this item.');
+        return;
+      }
+      const index = collection.findIndex((entry) => entry.id === item.id);
+      const remaining =
+        item.kind === 'audiobook' ? [item] : index < 0 ? [item] : collection.slice(index);
+      const itemIds = remaining
+        .filter((entry) => !entry.serverId && entry.available)
+        .map((entry) => entry.id);
+      void broadcast
+        .call('broadcast_replace_queue', { itemIds })
+        .then(() => {
+          setVisualExternal(false);
+          setVisualizerOnly(false);
+          if (!isAudio(item)) {
+            setNowPlaying(true);
+            setDetailId(null);
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    if (broadcast.state.listening?.active) {
+      notify('Choose the next item on the computer hosting this broadcast.');
       return;
     }
     setVisualExternal(false);
@@ -899,10 +1012,15 @@ export default function App() {
   }
   async function fullScreen() {
     try {
-      if (desktop) {
-        const win = getCurrentWindow();
-        await win.setFullscreen(!(await win.isFullscreen()));
-      } else if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+      const entering = desktop
+        ? !(await getCurrentWindow().isFullscreen())
+        : !document.fullscreenElement;
+      if (entering) {
+        setNowPlaying(true);
+        setTheater(true);
+      } else setTheater(false);
+      if (desktop) await getCurrentWindow().setFullscreen(entering);
+      else if (entering) await document.documentElement.requestFullscreen();
       else await document.exitFullscreen();
     } catch (e) {
       notify(String(e));
@@ -921,6 +1039,28 @@ export default function App() {
       setSubtitleName(path.split(/[\\/]/).pop() || 'Subtitles');
     } catch (e) {
       notify(String(e));
+    }
+  }
+  async function removeFromLibrary(items: MediaItem[]) {
+    if (
+      !window.confirm(
+        `Remove ${items.length === 1 ? `“${items[0].title}”` : `${items.length} items`} from your library? The files will stay on your computer. You can add them again by importing the files.`,
+      )
+    )
+      return;
+    const ids = items.map((item) => item.id);
+    try {
+      if (current && ids.includes(current.id)) await player.stop();
+      await native('remove_from_library', { ids });
+      player.set((state) => {
+        const before = state.queue.slice(0, state.index).filter((id) => !ids.includes(id)).length;
+        return { ...state, queue: state.queue.filter((id) => !ids.includes(id)), index: before };
+      });
+      setSelected(new Set());
+      await refresh();
+      notify('Removed from library. Original files were kept.');
+    } catch (error) {
+      notify(String(error));
     }
   }
   async function addToPlaylist(id: string, itemIds: string[] = [...selected]) {
@@ -1309,12 +1449,15 @@ export default function App() {
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  const id = e.dataTransfer.getData('application/elysium-item');
-                  if (!id || p.rule) return;
-                  void native('update_playlist', { id: p.id, itemIds: [...p.itemIds, id] })
-                    .then(refresh)
-                    .then(() => notify(`Added to ${p.name}`))
-                    .catch((e) => notify(String(e)));
+                  if (p.rule) return;
+                  try {
+                    const ids = JSON.parse(
+                      e.dataTransfer.getData('application/elysium-items'),
+                    ) as string[];
+                    if (Array.isArray(ids) && ids.length) void addToPlaylist(p.id, ids);
+                  } catch {
+                    /* Ignore unrelated drags. */
+                  }
                 }}
               >
                 {p.rule ? <Sparkles size={15} /> : <ListMusic size={15} />}
@@ -1375,6 +1518,7 @@ export default function App() {
                 broadcast={broadcast}
                 theater={theater}
                 toggleTheater={() => setTheater((t) => !t)}
+                fullScreen={() => void fullScreen()}
                 back={() => {
                   setTheater(false);
                   navigate('broadcast');
@@ -1391,6 +1535,9 @@ export default function App() {
                 Library
               </button>
               <span>{current?.title}</span>
+              <button onClick={() => void fullScreen()}>
+                <Maximize2 size={15} /> Full screen
+              </button>
             </div>
             <video
               ref={player.video}
@@ -1530,6 +1677,24 @@ export default function App() {
               <SourcesView
                 sources={library.sources}
                 scan={(s) => void scan(s)}
+                refreshAll={() =>
+                  void task('Refreshing library folders…', async () => {
+                    let failed = 0;
+                    for (const source of library.sources) {
+                      try {
+                        await native('scan_source', { sourceId: source.id });
+                      } catch {
+                        failed++;
+                      }
+                    }
+                    await refresh();
+                    notify(
+                      failed
+                        ? `Refreshed library · ${failed} folder${failed === 1 ? '' : 's'} could not be scanned`
+                        : 'Library folders refreshed',
+                    );
+                  })
+                }
                 rebind={(s) => void rebind(s)}
                 add={() => setSourceDialog(true)}
                 busy={!!busy}
@@ -1644,14 +1809,6 @@ export default function App() {
                       Compact song rows<small>More of your collection at a glance.</small>
                     </span>
                   </label>
-                  <label className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={browser}
-                      onChange={(e) => setBrowser(e.target.checked)}
-                    />
-                    <span>Show the genre, artist, and album browser</span>
-                  </label>
                 </section>
                 <section>
                   <h2>Sound & visuals</h2>
@@ -1748,6 +1905,9 @@ export default function App() {
             ) : view.startsWith('artist:') || view.startsWith('album:') ? (
               <CollectionPage
                 artist={view.startsWith('artist:') ? view.slice(7) : undefined}
+                artistImage={view.startsWith('artist:') ? artistImage(view.slice(7)) : undefined}
+                chooseArtistImage={chooseArtistImage}
+                removeArtistImage={removeArtistImage}
                 items={baseItems}
                 query={query}
                 selected={selected}
@@ -1805,7 +1965,7 @@ export default function App() {
                       if (current?.kind !== 'music') {
                         const music = allItems.filter((i) => i.kind === 'music' && i.available);
                         if (music[0]) play(music[0], music);
-                      } else if (!playback.playing) void player.toggle();
+                      } else if (!broadcast.active && !playback.playing) void player.toggle();
                       setNowPlaying(true);
                     }}
                   >
@@ -1928,6 +2088,12 @@ export default function App() {
                         ? `${filtered.length} items · ${seconds(filtered.reduce((sum, i) => sum + i.duration, 0))}`
                         : subtitles[view]}
                     </p>
+                    {selectedPlaylist && !selectedPlaylist.rule && (
+                      <p>
+                        Drag songs to arrange them in list view with Playlist order selected and
+                        filters cleared.
+                      </p>
+                    )}
                   </div>
                   <div className="view-header-actions">
                     <button className="primary" onClick={() => void importFiles()}>
@@ -1953,16 +2119,6 @@ export default function App() {
                       <Grid2X2 size={16} />
                     </button>
                   </div>
-                  {['music', 'favorites', 'recent'].includes(view) && (
-                    <button
-                      className={`icon-button browser-toggle ${browser ? 'active' : ''}`}
-                      aria-label="Toggle column browser"
-                      aria-pressed={browser}
-                      onClick={() => setBrowser(!browser)}
-                    >
-                      <Columns3 size={17} />
-                    </button>
-                  )}
                   <span className="selection-label">
                     {selected.size ? `${selected.size} selected` : `${filtered.length} items`}
                   </span>
@@ -1987,6 +2143,19 @@ export default function App() {
                       <button className="small-button" onClick={() => setInfoIds([...selected])}>
                         <Info size={14} />
                         Edit metadata
+                      </button>
+                      <button
+                        className="small-button"
+                        onClick={() =>
+                          void removeFromLibrary(
+                            allItems.filter((item) => selected.has(item.id) && !item.serverId),
+                          )
+                        }
+                        disabled={
+                          ![...selected].some((id) => library.items.some((item) => item.id === id))
+                        }
+                      >
+                        Remove from library
                       </button>
                       <AddToPlaylist
                         playlists={library.playlists}
@@ -2060,59 +2229,6 @@ export default function App() {
                     </details>
                   )}
                 </div>
-                {browser && ['music', 'favorites', 'recent'].includes(view) && !grid && (
-                  <div className="column-browser">
-                    {[
-                      {
-                        title: 'Genre',
-                        values: filteredGenres,
-                        value: genre,
-                        change: (v: string) => {
-                          setGenre(v);
-                          setArtist('');
-                          setAlbum('');
-                        },
-                      },
-                      {
-                        title: 'Artist',
-                        values: filteredArtists,
-                        value: artist,
-                        change: (v: string) => {
-                          setArtist(v);
-                          setAlbum('');
-                        },
-                      },
-                      { title: 'Album', values: filteredAlbums, value: album, change: setAlbum },
-                    ].map((column) => (
-                      <div key={column.title}>
-                        <span className="column-label">{column.title}</span>
-                        <div className="column-values">
-                          <button
-                            className={!column.value ? 'selected' : ''}
-                            onClick={() => column.change('')}
-                          >
-                            All{' '}
-                            {column.title.toLowerCase() === 'genre'
-                              ? 'genres'
-                              : column.title.toLowerCase() === 'artist'
-                                ? 'artists'
-                                : 'albums'}
-                            <small>{column.values.length}</small>
-                          </button>
-                          {column.values.map((value) => (
-                            <button
-                              key={value}
-                              className={column.value === value ? 'selected' : ''}
-                              onClick={() => column.change(value)}
-                            >
-                              {value}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
                 {view === 'movies' || view === 'tv' ? (
                   <div className="grid-scroll">
                     <MediaCards
@@ -2190,7 +2306,13 @@ export default function App() {
                             openArtist(name);
                           }}
                         >
-                          <Artwork item={group[0]} label={name} />
+                          <Artwork
+                            item={
+                              artistItems(allItems, name).find((item) => item.artwork) || group[0]
+                            }
+                            image={artistImage(name)}
+                            label={name}
+                          />
                           <h3>{name}</h3>
                           <p>
                             {group.length} songs · {albumGroups(group).length} albums
@@ -2215,6 +2337,25 @@ export default function App() {
                     contextMenu={openTrackMenu}
                     openArtist={openArtist}
                     openAlbum={openAlbum}
+                    playlistId={selectedPlaylist?.id}
+                    reorder={
+                      selectedPlaylist &&
+                      !selectedPlaylist.rule &&
+                      sort === 'playlist' &&
+                      !query &&
+                      !series &&
+                      filtered.length === selectedPlaylist.itemIds.length
+                        ? (from, to) => {
+                            if (from === to) return;
+                            const itemIds = [...selectedPlaylist.itemIds];
+                            const [moved] = itemIds.splice(from, 1);
+                            itemIds.splice(to, 0, moved);
+                            void native('update_playlist', { id: selectedPlaylist.id, itemIds })
+                              .then(refresh)
+                              .catch((e) => notify(String(e)));
+                          }
+                        : undefined
+                    }
                   />
                 )}
               </>
@@ -2251,7 +2392,19 @@ export default function App() {
                         openItemMenu([item], e, index);
                     }}
                   >
-                    <button className="queue-item-main" onClick={() => void player.jump(index)}>
+                    <button
+                      className="queue-item-main"
+                      onClick={() =>
+                        broadcast.active
+                          ? play(
+                              item,
+                              playback.queue
+                                .slice(index)
+                                .flatMap((id) => allItems.find((entry) => entry.id === id) || []),
+                            )
+                          : void player.jump(index)
+                      }
+                    >
                       <Artwork item={item} />
                       <span>
                         <strong>{item.title}</strong>
@@ -2432,6 +2585,7 @@ export default function App() {
                         .join(' · ')
                     : 'Pick something you love.')}
               </span>
+              <small className="broadcast-status broadcast-status-off">Not broadcasting</small>
               {current && !current.serverId && (
                 <Rating
                   item={current}
@@ -2493,6 +2647,18 @@ export default function App() {
             <div className="footer-tools">
               {volumeControls}
               <div className="footer-actions">
+                <button
+                  className="broadcast-start"
+                  aria-label="Start broadcasting current playback"
+                  title="Start broadcasting current playback"
+                  disabled={
+                    !current || !!current.serverId || !current.available || !!broadcast.busy
+                  }
+                  onClick={() => void broadcastCurrent()}
+                >
+                  <Radio size={16} />
+                  <span>Broadcast</span>
+                </button>
                 <button
                   className={`icon-button ${eqOpen ? 'active' : ''}`}
                   aria-label="Equalizer"
@@ -2791,7 +2957,15 @@ export default function App() {
       )}
       {sourceDialog && (
         <AddSourceDialog
-          initialKind={view === 'audiobooks' ? 'audiobook' : 'mixed'}
+          initialKind={
+            view === 'audiobooks'
+              ? 'audiobook'
+              : view === 'movies'
+                ? 'movie'
+                : view === 'music' || view === 'tv'
+                  ? view
+                  : 'mixed'
+          }
           close={() => setSourceDialog(false)}
           add={addSource}
         />

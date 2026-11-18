@@ -13,7 +13,7 @@ import {
   Waves,
 } from 'lucide-react';
 import type { Broadcast } from './useBroadcast';
-import { seconds } from '../domain';
+import { BroadcastSeek } from './BroadcastSeek';
 import './transport.css';
 
 export function BroadcastTransport({
@@ -45,11 +45,6 @@ export function BroadcastTransport({
       })
       .catch(() => {});
   };
-  const position = Math.min(
-    b.track?.duration || Infinity,
-    host ? b.state.station?.position || 0 : b.state.listening?.position || 0,
-  );
-  const offset = b.track?.startPosition || 0;
   return (
     <div
       className="broadcast-player"
@@ -63,6 +58,19 @@ export function BroadcastTransport({
         {host ? <Radio size={26} /> : <Headphones size={26} />}
       </button>
       <div className="broadcast-player-info">
+        <span
+          className={`broadcast-status ${host ? (b.paused ? 'broadcast-status-paused' : 'broadcast-status-live') : 'broadcast-status-listening'}`}
+          role="status"
+        >
+          {host ? <Radio size={12} /> : <Headphones size={12} />}
+          {host
+            ? b.paused
+              ? 'Broadcast paused'
+              : 'Live broadcast'
+            : b.paused
+              ? 'Listening paused'
+              : 'Listening to broadcast'}
+        </span>
         <button onClick={visualize}>{b.track?.title || b.name}</button>
         <span>{b.track?.artist || b.name}</span>
         <small>
@@ -119,8 +127,9 @@ export function BroadcastTransport({
               <SkipForward size={19} fill="currentColor" />
             </button>
             <button
-              className="icon-button"
+              className="icon-button broadcast-stop"
               aria-label={host ? 'Stop broadcast' : 'Leave broadcast'}
+              title={host ? 'Stop broadcast' : 'Leave broadcast'}
               disabled={!!b.busy}
               onClick={() => void b.stop().catch(() => {})}
             >
@@ -128,15 +137,7 @@ export function BroadcastTransport({
             </button>
           </div>
         </div>
-        <div className="seek-row">
-          <span>{seconds(position + offset)}</span>
-          <progress
-            aria-label="Live broadcast position"
-            max={Math.max(1, (b.track?.duration || 0) + offset)}
-            value={position + offset}
-          />
-          <span>{seconds((b.track?.duration || 0) + offset)}</span>
-        </div>
+        <BroadcastSeek broadcast={b} />
       </div>
       <div className="footer-tools">
         <div className="footer-volume">
@@ -167,8 +168,10 @@ export function BroadcastTransport({
             <Waves size={18} />
           </button>
           <button
-            className="icon-button"
-            aria-label="LAN broadcast settings"
+            className={`icon-button broadcast-settings ${host ? 'broadcast-settings-live' : 'broadcast-settings-listening'}`}
+            aria-label={
+              host ? 'Broadcast settings · broadcasting' : 'Broadcast settings · listening'
+            }
             title="LAN broadcast"
             onClick={settings}
           >

@@ -2,17 +2,20 @@ import { useEffect, useRef, useState } from 'react';
 import Hls from 'hls.js';
 import { ArrowLeft, Maximize2, Pause, Play, RefreshCw } from 'lucide-react';
 import type { Broadcast } from './useBroadcast';
+import { BroadcastSeek } from './BroadcastSeek';
 
 export function BroadcastVideo({
   broadcast: b,
   back,
   theater,
   toggleTheater,
+  fullScreen,
 }: {
   broadcast: Broadcast;
   back: () => void;
   theater: boolean;
   toggleTheater: () => void;
+  fullScreen: () => void;
 }) {
   const live = b.state.video!;
   const media = useRef<HTMLVideoElement>(null),
@@ -165,19 +168,27 @@ export function BroadcastVideo({
   const pause = () => void b.toggle().catch(() => {});
   return (
     <div className="broadcast-video">
-      <video ref={media} muted playsInline preload="auto" aria-label="Live broadcast video" />
+      <video
+        ref={media}
+        muted
+        playsInline
+        preload="auto"
+        aria-label="Live broadcast video"
+        onDoubleClick={fullScreen}
+      />
       <div className="stage-top">
         <button onClick={back}>
           <ArrowLeft size={15} />
           LAN broadcast
         </button>
         <strong>{b.track?.title || b.name}</strong>
-        <button onClick={toggleTheater}>
-          <Maximize2 size={15} />
-          {theater ? 'Exit theater' : 'Theater'}
+        <button onClick={toggleTheater}>{theater ? 'Exit theater' : 'Theater'}</button>
+        <button onClick={fullScreen}>
+          <Maximize2 size={15} /> Full screen
         </button>
       </div>
       <div className="broadcast-video-controls">
+        <BroadcastSeek broadcast={b} />
         <span className="on-air">
           {b.paused ? 'PAUSED' : 'LIVE'} {level && !b.paused ? `· ${level}` : ''}
         </span>

@@ -12,7 +12,7 @@ use std::{
     path::PathBuf,
     process::{Child, Stdio},
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
         mpsc::{self, SyncSender},
         Arc, Mutex,
     },
@@ -29,12 +29,20 @@ pub struct BroadcastRequest {
     pub finish_track: bool,
     #[serde(default)]
     pub resume_books: bool,
+    #[serde(default)]
+    pub start_position: Option<f64>,
     pub shuffle: bool,
     pub play_here: bool,
     pub output_device: Option<String>,
 }
 impl BroadcastRequest {
     pub fn validate(&self) -> Result<(), String> {
+        if self
+            .start_position
+            .is_some_and(|p| !p.is_finite() || p < 0.)
+        {
+            return Err("Invalid starting position".into());
+        }
         if self.name.trim().is_empty() || self.name.chars().count() > 80 {
             return Err("Give the station a name of up to 80 characters".into());
         }
@@ -115,7 +123,7 @@ pub struct Station {
     pub started: AtomicU64,
     pub tracks: Mutex<VecDeque<(Track, i64)>>,
     pub video_root: tempfile::TempDir,
-    pub lookahead: i64,
+    pub lookahead: AtomicI64,
     pub progress_store: Option<Arc<crate::store::Store>>,
     pub book_progress: Mutex<VecDeque<BookCheckpoint>>,
     pub origin: std::time::Instant,
@@ -124,6 +132,7 @@ pub struct Station {
 pub struct Transport {
     paused: bool,
     pending: Option<PlaybackRequest>,
+    replacement: Option<Vec<MediaItem>>,
     frozen: Option<StationView>,
     elapsed_floor: f64,
 }
@@ -172,6 +181,55 @@ impl Station {
         }
         Ok(())
     }
+    pub fn seek(&self, position: f64) -> Result<(), String> {
+        if !position.is_finite() || position < 0. {
+            return Err("Choose a valid playback position".into());
+        }
+        let now = self.origin.elapsed().as_micros() as i64;
+        let mut view = self.snapshot(now);
+        let mut track = view
+            .track
+            .clone()
+            .ok_or("The broadcast is still preparing")?;
+        let duration = track.start_position + track.duration;
+        if !duration.is_finite() || duration <= 0. {
+            return Err("The duration of this media is unavailable".into());
+        }
+        let target = position.min((duration - 0.1).max(0.));
+        let mut transport = self
+            .transport
+            .lock()
+            .map_err(|_| "LAN session unavailable")?;
+        if !self.alive.load(Ordering::Acquire) {
+            return Err("This broadcast has ended".into());
+        }
+        transport.pending = Some(PlaybackRequest {
+            index: track.index,
+            position: target,
+            elapsed: view.elapsed,
+        });
+        self.skip.fetch_add(1, Ordering::AcqRel);
+        self.stop_child();
+        reset(self);
+        if transport.paused {
+            track.start_position = target;
+            track.duration = duration - target;
+            view.track = Some(track.clone());
+            view.position = 0.;
+            view.paused = true;
+            transport.frozen = Some(view);
+            self.tracks.lock().unwrap().push_back((track.clone(), now));
+            self.emit(Packet::Control(Control::NowPlaying {
+                track,
+                at: now,
+                paused: true,
+                position: 0.,
+            }));
+        } else {
+            transport.frozen = None;
+        }
+        Ok(())
+    }
     pub fn navigate(&self, direction: i32) -> Result<(), String> {
         let view = self.snapshot(self.origin.elapsed().as_micros() as i64);
         let track = view.track.ok_or("The broadcast is still preparing")?;
@@ -196,6 +254,35 @@ impl Station {
             position: 0.,
             elapsed: view.elapsed,
         });
+        self.skip.fetch_add(1, Ordering::AcqRel);
+        self.stop_child();
+        reset(self);
+        Ok(())
+    }
+    pub fn replace_queue(&self, items: Vec<MediaItem>) -> Result<(), String> {
+        if items.is_empty() || items.len() > 10_000 {
+            return Err("Choose between 1 and 10,000 media items".into());
+        }
+        let mut transport = self
+            .transport
+            .lock()
+            .map_err(|_| "LAN session unavailable")?;
+        if !self.alive.load(Ordering::Acquire) {
+            return Err("This broadcast has ended".into());
+        }
+        let lookahead = if items
+            .iter()
+            .any(|item| item.kind == "movie" || item.kind == "tv")
+        {
+            super::video::LOOKAHEAD
+        } else {
+            BUFFER_US
+        };
+        self.lookahead.store(lookahead, Ordering::Release);
+        transport.paused = false;
+        transport.frozen = None;
+        transport.pending = None;
+        transport.replacement = Some(items);
         self.skip.fetch_add(1, Ordering::AcqRel);
         self.stop_child();
         reset(self);
@@ -371,11 +458,13 @@ pub fn launch(
         started: AtomicU64::new(0),
         tracks: Mutex::new(VecDeque::new()),
         video_root: tempfile::tempdir().map_err(|e| e.to_string())?,
-        lookahead: if items.iter().any(|i| i.kind == "movie" || i.kind == "tv") {
-            super::video::LOOKAHEAD
-        } else {
-            BUFFER_US
-        },
+        lookahead: AtomicI64::new(
+            if items.iter().any(|i| i.kind == "movie" || i.kind == "tv") {
+                super::video::LOOKAHEAD
+            } else {
+                BUFFER_US
+            },
+        ),
         view: Mutex::new(StationView {
             id,
             name: request.name.trim().into(),
@@ -388,7 +477,7 @@ pub fn launch(
             ..Default::default()
         }),
     });
-    if items.iter().any(|item| item.kind == "audiobook") {
+    {
         let progress = station.clone();
         std::thread::spawn(move || {
             while progress.alive.load(Ordering::Acquire) {
@@ -413,7 +502,7 @@ fn shuffle(items: &mut [MediaItem]) {
 fn produce(
     node: Arc<Node>,
     station: Arc<Station>,
-    request: BroadcastRequest,
+    mut request: BroadcastRequest,
     mut items: Vec<MediaItem>,
     ffmpeg: PathBuf,
 ) {
@@ -423,8 +512,8 @@ fn produce(
     let mut cycle_index = 0;
     let mut failures = 0;
     let mut observed_skip = 0;
-    let mut base = node.now() + station.lookahead;
-    let mut requested_offset = None;
+    let mut base = node.now() + station.lookahead.load(Ordering::Acquire);
+    let mut requested_offset = request.start_position;
     station.started.store(base as u64, Ordering::Relaxed);
     if request.shuffle {
         shuffle(&mut items);
@@ -439,6 +528,20 @@ fn produce(
             }
             if station.skip.load(Ordering::Acquire) != observed_skip {
                 observed_skip = station.skip.load(Ordering::Acquire);
+                if let Some(replacement) = transport.replacement.take() {
+                    items = replacement;
+                    request.item_ids = items.iter().map(|item| item.id.clone()).collect();
+                    cycle_index = 0;
+                    completed = 0;
+                    total_frames = 0;
+                    failures = 0;
+                    transport.elapsed_floor = 0.;
+                    requested_offset = if items[0].kind == "audiobook" {
+                        Some(items[0].resume)
+                    } else {
+                        Some(0.)
+                    };
+                }
                 if let Some(pending) = transport.pending.take() {
                     transport.elapsed_floor = pending.elapsed;
                     cycle_index = pending.index.min(items.len() - 1);
@@ -449,7 +552,7 @@ fn produce(
                     requested_offset = Some(pending.position);
                 }
                 transport.frozen = None;
-                base = node.now() + station.lookahead
+                base = node.now() + station.lookahead.load(Ordering::Acquire)
                     - (total_frames * 1_000_000 / RATE as u64) as i64;
                 station.started.store(base.max(0) as u64, Ordering::Relaxed);
                 reset(&station);
@@ -466,11 +569,16 @@ fn produce(
                 }
                 std::thread::sleep(Duration::from_millis(20));
             }
-            // A pause/skip can arrive between the last sleep and the end check.
+            // Serialize completion with replacement so a new selection is not lost.
+            let transport = station.transport.lock().unwrap();
             if station.skip.load(Ordering::Acquire) != observed_skip {
+                drop(transport);
                 continue;
             }
-            break;
+            station.stop("Broadcast finished");
+            drop(transport);
+            node.advertise();
+            return;
         }
         if cycle_index == items.len() {
             cycle_index = 0;
@@ -645,7 +753,7 @@ fn produce(
                 let at = base + (total_frames * 1_000_000 / RATE as u64) as i64;
                 while station.alive.load(Ordering::Acquire)
                     && station.skip.load(Ordering::Acquire) == observed_skip
-                    && node.now() + station.lookahead < at
+                    && node.now() + station.lookahead.load(Ordering::Acquire) < at
                 {
                     std::thread::sleep(Duration::from_millis(5));
                 }
@@ -662,7 +770,7 @@ fn produce(
                 // If a decoder stalls beyond the lookahead, move every room onto
                 // the same fresh timeline instead of sending already-late sound.
                 let at = if at < node.now() + 100_000 {
-                    base = node.now() + station.lookahead
+                    base = node.now() + station.lookahead.load(Ordering::Acquire)
                         - (total_frames * 1_000_000 / RATE as u64) as i64;
                     reset(&station);
                     station.schedule_track(
@@ -754,6 +862,7 @@ mod tests {
             minutes: 1,
             finish_track: true,
             resume_books: false,
+            start_position: None,
             shuffle: false,
             play_here: false,
             output_device: None,
@@ -769,5 +878,10 @@ mod tests {
         let mut invalid = request("duration");
         invalid.minutes = 0;
         assert!(invalid.validate().is_err());
+        let mut handoff = request("once");
+        handoff.start_position = Some(42.5);
+        assert!(handoff.validate().is_ok());
+        handoff.start_position = Some(-1.0);
+        assert!(handoff.validate().is_err());
     }
 }

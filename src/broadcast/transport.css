@@ -99,3 +99,84 @@
     min-width: 220px;
   }
 }
+
+.broadcast-seek progress {
+  flex: 1;
+  min-width: 0;
+}
+.broadcast-video-controls .broadcast-seek {
+  flex: 1 0 100%;
+  width: 100%;
+}
+.broadcast-video-controls .broadcast-seek progress {
+  accent-color: var(--accent);
+  height: 5px;
+}
+
+/* Clear state labels make the radio controls understandable at a glance. */
+.broadcast-status {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 4px;
+  max-width: 100%;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.footer-info .broadcast-status-off {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+.broadcast-player-info > .broadcast-status {
+  padding: 3px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.broadcast-player-info > .broadcast-status-live {
+  background: #ad3345;
+  color: #fff;
+}
+.broadcast-player-info > .broadcast-status-paused {
+  background: var(--selection);
+  color: var(--text);
+}
+.broadcast-player-info > .broadcast-status-listening {
+  background: var(--selection);
+  color: var(--text);
+}
+.broadcast-start {
+  min-height: 27px;
+  padding: 3px 7px;
+  gap: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface);
+  border-color: var(--line);
+  box-shadow: none;
+}
+.player-footer > .footer-tools {
+  width: 240px;
+}
+.broadcast-player .broadcast-settings-live {
+  color: #c54354;
+  background: var(--selection);
+  border-radius: 5px;
+}
+.broadcast-player .broadcast-settings-listening {
+  color: var(--accent);
+  background: var(--selection);
+  border-radius: 5px;
+}
+.broadcast-player .broadcast-stop {
+  color: var(--danger);
+}
+.mini-mode .footer-info .broadcast-status-off {
+  display: block;
+}

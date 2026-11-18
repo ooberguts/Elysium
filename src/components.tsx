@@ -29,14 +29,22 @@ export function Artwork({
   item,
   className = '',
   label,
+  image,
 }: {
   item?: MediaItem;
   className?: string;
   label?: string;
+  image?: string;
 }) {
   const [failed, fail] = useState(false);
-  const url = artworkUrl(item?.artwork || null);
-  useEffect(() => fail(false), [url]);
+  const [fallbackFailed, failFallback] = useState(false);
+  const preferredUrl = artworkUrl(image || item?.artwork || null);
+  const fallbackUrl = image ? artworkUrl(item?.artwork || null) : undefined;
+  const url = failed ? (fallbackFailed ? undefined : fallbackUrl) : preferredUrl;
+  useEffect(() => {
+    fail(false);
+    failFallback(false);
+  }, [preferredUrl, fallbackUrl]);
   const name = label || item?.album || item?.series || item?.title || 'Elysium';
   let seed = 0;
   for (const c of name) seed = (seed * 31 + c.charCodeAt(0)) >>> 0;
@@ -45,8 +53,16 @@ export function Artwork({
       className={`artwork ${className}`}
       style={{ '--art-hue': `${seed % 360}` } as React.CSSProperties}
     >
-      {url && !failed ? (
-        <img src={url} onError={() => fail(true)} alt="" loading="lazy" />
+      {url ? (
+        <img
+          src={url}
+          onError={() => {
+            if (failed) failFallback(true);
+            else fail(true);
+          }}
+          alt=""
+          loading="lazy"
+        />
       ) : (
         <>
           <div className="art-orbit" />
@@ -134,6 +150,8 @@ export function TrackTable({
   contextMenu,
   openArtist,
   openAlbum,
+  reorder,
+  playlistId,
 }: {
   items: MediaItem[];
   selected: Set<string>;
@@ -149,6 +167,8 @@ export function TrackTable({
   contextMenu: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
   openArtist?: (artist: string) => void;
   openAlbum?: (item: MediaItem) => void;
+  reorder?: (from: number, to: number) => void;
+  playlistId?: string;
 }) {
   const parent = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
@@ -182,7 +202,7 @@ export function TrackTable({
             return (
               <div
                 className={`track-row ${selected.has(item.id) ? 'selected' : ''} ${currentId === item.id ? 'current' : ''} ${!item.available ? 'unavailable' : ''}`}
-                key={item.id}
+                key={`${item.id}-${row.index}`}
                 style={{ height: row.size, transform: `translateY(${row.start}px)` }}
                 role="row"
                 tabIndex={0}
@@ -193,8 +213,34 @@ export function TrackTable({
                 aria-selected={selected.has(item.id)}
                 draggable
                 onDragStart={(e) => {
-                  e.dataTransfer.setData('application/elysium-item', item.id);
-                  e.dataTransfer.effectAllowed = 'copy';
+                  const ids = selected.has(item.id)
+                    ? items.filter((i) => selected.has(i.id)).map((i) => i.id)
+                    : [item.id];
+                  e.dataTransfer.setData('application/elysium-items', JSON.stringify(ids));
+                  if (playlistId)
+                    e.dataTransfer.setData(
+                      'application/elysium-position',
+                      JSON.stringify({ playlistId, index: row.index }),
+                    );
+                  e.dataTransfer.effectAllowed = 'copyMove';
+                }}
+                onDragOver={(e) => {
+                  if (reorder && e.dataTransfer.types.includes('application/elysium-position')) {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                  }
+                }}
+                onDrop={(e) => {
+                  if (!reorder) return;
+                  const data = e.dataTransfer.getData('application/elysium-position');
+                  if (!data) return;
+                  e.preventDefault();
+                  try {
+                    const from = JSON.parse(data) as { playlistId: string; index: number };
+                    if (from.playlistId === playlistId) reorder(from.index, row.index);
+                  } catch {
+                    /* Ignore drags from other applications. */
+                  }
                 }}
                 onClick={(e) => select(item, e)}
                 onDoubleClick={() => play(item)}
@@ -400,7 +446,8 @@ export function AddSourceDialog({
       >
         <p className="dialog-intro">
           Add a folder on this computer, an external drive, or a network share mounted by your
-          operating system.
+          operating system. All subfolders are included; use Refresh in Library folders to scan for
+          changes.
         </p>
         <label>
           Folder
@@ -522,12 +569,14 @@ export function PlaylistDialog({
 export function SourcesView({
   sources,
   scan,
+  refreshAll,
   rebind,
   add,
   busy,
 }: {
   sources: Source[];
   scan: (source: Source) => void;
+  refreshAll: () => void;
   rebind: (source: Source) => void;
   add: () => void;
   busy: boolean;
@@ -539,10 +588,14 @@ export function SourcesView({
           <h2>Your library sources</h2>
           <p>Files stay where they belong. Your collection stays together.</p>
         </div>
-        <button className="primary" onClick={add}>
-          <FolderOpen size={16} />
-          Add folder
-        </button>
+        <div className="view-header-actions">
+          <button onClick={refreshAll} disabled={busy || !sources.length}>
+            <RefreshCw size={16} /> Refresh all
+          </button>
+          <button className="primary" onClick={add}>
+            <FolderOpen size={16} /> Add folder
+          </button>
+        </div>
       </div>
       {sources.map((source) => (
         <article className="source-card" key={source.id}>
@@ -558,7 +611,16 @@ export function SourcesView({
             </h3>
             <p className="file-path">{source.path}</p>
             <small>
-              {source.count} media files
+              {source.kind === 'audiobook'
+                ? 'Audiobooks'
+                : source.kind === 'movie'
+                  ? 'Movies'
+                  : source.kind === 'tv'
+                    ? 'TV shows'
+                    : source.kind === 'music'
+                      ? 'Music'
+                      : 'Mixed media'}{' '}
+              · {source.count} media files
               {source.scannedAt
                 ? ` · scanned ${new Date(source.scannedAt * 1000).toLocaleDateString()}`
                 : ' · ready to scan'}

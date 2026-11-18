@@ -33,6 +33,7 @@ impl Store {
           CREATE TABLE IF NOT EXISTS sources (id TEXT PRIMARY KEY, data TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS playlists (id TEXT PRIMARY KEY, data TEXT NOT NULL);
           CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS excluded_paths (path TEXT PRIMARY KEY);
           PRAGMA user_version=1;").map_err(err)?;
         Ok(Self {
             db: Mutex::new(conn),
@@ -165,6 +166,79 @@ impl Store {
         .map_err(err)?;
         Ok(())
     }
+    pub fn is_excluded(&self, path: &str) -> Result<bool, String> {
+        let conn = self.db.lock().map_err(err)?;
+        conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM excluded_paths WHERE path=?1)",
+            [path],
+            |r| r.get(0),
+        )
+        .map_err(err)
+    }
+    pub fn include_path(&self, path: &str) -> Result<(), String> {
+        let conn = self.db.lock().map_err(err)?;
+        conn.execute("DELETE FROM excluded_paths WHERE path=?1", [path])
+            .map_err(err)?;
+        Ok(())
+    }
+    pub fn remove_items(&self, ids: &[String]) -> Result<(), String> {
+        let mut conn = self.db.lock().map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        for id in ids {
+            tx.execute(
+                "INSERT OR IGNORE INTO excluded_paths(path) SELECT path FROM items WHERE id=?1",
+                [id],
+            )
+            .map_err(err)?;
+            tx.execute("DELETE FROM items WHERE id=?1", [id])
+                .map_err(err)?;
+        }
+        let lists = read_table::<Playlist>(&tx, "playlists")?;
+        for mut list in lists {
+            list.item_ids.retain(|id| !ids.contains(id));
+            tx.execute(
+                "UPDATE playlists SET data=?2 WHERE id=?1",
+                params![list.id, serde_json::to_string(&list).map_err(err)?],
+            )
+            .map_err(err)?;
+        }
+        tx.commit().map_err(err)
+    }
+    pub fn set_artist_artwork(&self, artist: &str, artwork: Option<&str>) -> Result<(), String> {
+        if artist.trim().is_empty() || artist.len() > 1000 {
+            return Err("Choose a valid artist".into());
+        }
+        let mut conn = self.db.lock().map_err(err)?;
+        let tx = conn.transaction().map_err(err)?;
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT value FROM settings WHERE key='artistArtwork'",
+                [],
+                |r| r.get(0),
+            )
+            .ok();
+        let mut images: HashMap<String, String> = current
+            .as_deref()
+            .map(serde_json::from_str)
+            .transpose()
+            .map_err(err)?
+            .unwrap_or_default();
+        if let Some(path) = artwork {
+            images.insert(artist.to_owned(), path.to_owned());
+        } else {
+            images.remove(artist);
+        }
+        let value = serde_json::to_string(&images).map_err(err)?;
+        if value.len() > 500_000 {
+            return Err("Artist artwork list is too large".into());
+        }
+        tx.execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES('artistArtwork',?1)",
+            [value],
+        )
+        .map_err(err)?;
+        tx.commit().map_err(err)
+    }
     pub fn source(&self, id: &str) -> Result<Source, String> {
         let conn = self.db.lock().map_err(err)?;
         let json: String = conn
@@ -218,6 +292,52 @@ fn read_table<T: serde::de::DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn artist_artwork_is_independent_and_persistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_owned(), PathBuf::new()).unwrap();
+        store
+            .set_artist_artwork("First artist", Some("/cached/first.img"))
+            .unwrap();
+        store
+            .set_artist_artwork("Second artist", Some("/cached/second.img"))
+            .unwrap();
+        store.set_artist_artwork("First artist", None).unwrap();
+        drop(store);
+        let reopened = Store::new(dir.path().to_owned(), PathBuf::new()).unwrap();
+        let settings = reopened.library().unwrap().settings;
+        let images: HashMap<String, String> =
+            serde_json::from_str(&settings["artistArtwork"]).unwrap();
+        assert!(!images.contains_key("First artist"));
+        assert_eq!(images["Second artist"], "/cached/second.img");
+    }
+    #[test]
+    fn removing_items_keeps_files_and_excludes_them_until_reimported() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("song.mp3");
+        std::fs::write(&file, b"original media").unwrap();
+        let store = Store::new(dir.path().join("data"), PathBuf::new()).unwrap();
+        let item = crate::media::read_media(&store, &file, None).unwrap();
+        store.save_item(&item).unwrap();
+        store
+            .save_playlist(&Playlist {
+                id: "list".into(),
+                name: "List".into(),
+                rule: None,
+                item_ids: vec![item.id.clone(), item.id.clone()],
+            })
+            .unwrap();
+        store.remove_items(std::slice::from_ref(&item.id)).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), b"original media");
+        assert!(store.item(&item.id).is_err());
+        assert!(store.playlist("list").unwrap().item_ids.is_empty());
+        assert!(store.is_excluded(&item.path).unwrap());
+        drop(store);
+        let reopened = Store::new(dir.path().join("data"), PathBuf::new()).unwrap();
+        assert!(reopened.is_excluded(&item.path).unwrap());
+        reopened.include_path(&item.path).unwrap();
+        assert!(!reopened.is_excluded(&item.path).unwrap());
+    }
     #[test]
     fn persists_preferences_and_playlists() {
         let dir = tempfile::tempdir().unwrap();

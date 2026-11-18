@@ -651,60 +651,6 @@ hr {
   border-color: var(--line);
   min-height: 26px;
 }
-.column-browser {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border-bottom: 1px solid var(--line);
-  height: 151px;
-  flex-shrink: 0;
-  background: var(--surface);
-}
-.column-browser > div {
-  border-right: 1px solid var(--line);
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  padding-top: 8px;
-}
-.column-browser > div:last-child {
-  border: 0;
-}
-.column-label {
-  font-size: 9px;
-  letter-spacing: 0.7px;
-  color: var(--muted);
-  text-transform: uppercase;
-  padding: 0 12px 5px;
-  font-weight: 650;
-}
-.column-values {
-  overflow: auto;
-  padding: 0 6px 6px;
-}
-.column-values > button {
-  display: flex;
-  justify-content: flex-start;
-  width: 100%;
-  min-height: 25px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 3px;
-  box-shadow: none;
-  background: none;
-  font-size: 11px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.column-values > button small {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 9px;
-}
-.column-values > button.selected {
-  background: var(--selection);
-  color: var(--accent);
-}
 .track-table {
   flex: 1;
   min-height: 0;

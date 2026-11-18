@@ -10,7 +10,7 @@ mod tests;
 mod timing;
 mod video;
 
-use crate::store::Store;
+use crate::store::{err, Store};
 use audio::Sink;
 use cpal::traits::{DeviceTrait, HostTrait};
 use protocol::{Control, Packet, Track};
@@ -663,6 +663,49 @@ pub async fn broadcast_start(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
+pub async fn broadcast_replace_queue(
+    state: tauri::State<'_, BroadcastState>,
+    store: tauri::State<'_, Arc<Store>>,
+    item_ids: Vec<String>,
+) -> Result<(), String> {
+    if item_ids.is_empty() || item_ids.len() > 10_000 {
+        return Err("Choose between 1 and 10,000 media items".into());
+    }
+    let node = get_node(&state)?;
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = node
+            .operation
+            .lock()
+            .map_err(|_| "LAN session unavailable")?;
+        let items = item_ids
+            .iter()
+            .map(|id| {
+                let item = store.item(id)?;
+                if !item.available || !std::path::Path::new(&item.path).is_file() {
+                    return Err(format!(
+                        "{} is unavailable. Reconnect its folder and try again.",
+                        item.title
+                    ));
+                }
+                if !["music", "movie", "tv", "audiobook"].contains(&item.kind.as_str()) {
+                    return Err("Unsupported broadcast media".into());
+                }
+                Ok(item)
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        let station = node
+            .station
+            .lock()
+            .map_err(|_| "LAN session unavailable")?
+            .clone()
+            .ok_or("This broadcast has ended")?;
+        station.replace_queue(items)
+    })
+    .await
+    .map_err(err)?
+}
+#[tauri::command]
 pub async fn broadcast_stop(state: tauri::State<'_, BroadcastState>) -> Result<(), String> {
     let node = get_node(&state)?;
     tauri::async_runtime::spawn_blocking(move || {
@@ -699,6 +742,24 @@ pub async fn broadcast_previous(state: tauri::State<'_, BroadcastState>) -> Resu
     })
     .await
     .map_err(|e| e.to_string())?
+}
+#[tauri::command]
+pub async fn broadcast_seek(
+    state: tauri::State<'_, BroadcastState>,
+    position: f64,
+) -> Result<(), String> {
+    let node = get_node(&state)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let station = node
+            .station
+            .lock()
+            .unwrap()
+            .clone()
+            .ok_or("Start a broadcast first")?;
+        station.seek(position)
+    })
+    .await
+    .map_err(err)?
 }
 #[tauri::command]
 pub async fn broadcast_pause(

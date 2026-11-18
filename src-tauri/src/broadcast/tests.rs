@@ -57,7 +57,7 @@ fn fake_station(node: &Node) -> Arc<Station> {
         started: AtomicU64::new(0),
         tracks: Mutex::new(std::collections::VecDeque::new()),
         video_root: tempfile::tempdir().unwrap(),
-        lookahead: protocol::BUFFER_US,
+        lookahead: std::sync::atomic::AtomicI64::new(protocol::BUFFER_US),
         progress_store: None,
         book_progress: Mutex::new(std::collections::VecDeque::new()),
         origin: node.origin,
@@ -141,6 +141,160 @@ fn headless_listener(host: &Arc<Node>) -> Arc<Node> {
 }
 
 #[test]
+fn seeking_moves_all_rooms_and_preserves_pause() {
+    let temp = tempfile::tempdir().unwrap();
+    let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+    let store = Arc::new(
+        Store::new(
+            temp.path().join("library"),
+            resources.join(format!("bin/ffmpeg{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap(),
+    );
+    let first =
+        crate::media::read_media(&store, &resources.join("demo/01 - Glass Horizon.mp3"), None)
+            .unwrap();
+    let host = node();
+    let _host = Cleanup(host.clone());
+    let station = station::launch(
+        host.clone(),
+        station::BroadcastRequest {
+            name: "Seek test".into(),
+            item_ids: vec![first.id.clone()],
+            mode: "repeat".into(),
+            minutes: 1,
+            finish_track: true,
+            resume_books: false,
+            start_position: None,
+            shuffle: false,
+            play_here: false,
+            output_device: None,
+        },
+        vec![first],
+        store,
+    )
+    .unwrap();
+    *host.station.lock().unwrap() = Some(station.clone());
+    let a = headless_listener(&host);
+    let _a = Cleanup(a.clone());
+    let b = headless_listener(&host);
+    let _b = Cleanup(b.clone());
+    wait_for(|| {
+        a.snapshot()
+            .listening
+            .is_some_and(|view| view.phase == "playing")
+    });
+    assert!(station.seek(f64::NAN).is_err());
+    assert!(station.seek(-1.).is_err());
+    station.seek(5.).unwrap();
+    wait_for(|| {
+        [a.snapshot(), b.snapshot()].into_iter().all(|snapshot| {
+            snapshot.listening.is_some_and(|view| {
+                view.track
+                    .is_some_and(|track| (track.start_position - 5.).abs() < 0.01)
+            })
+        })
+    });
+    assert_eq!(station.subscribers.lock().unwrap().len(), 2);
+    station.pause(true).unwrap();
+    station.seek(8.).unwrap();
+    wait_for(|| {
+        [a.snapshot(), b.snapshot()].into_iter().all(|snapshot| {
+            snapshot.listening.is_some_and(|view| {
+                view.phase == "paused"
+                    && view
+                        .track
+                        .is_some_and(|track| (track.start_position - 8.).abs() < 0.01)
+            })
+        })
+    });
+    let frozen = station.snapshot(host.now());
+    assert!(frozen.paused);
+    assert!((frozen.track.unwrap().start_position - 8.).abs() < 0.01);
+    station.pause(false).unwrap();
+    wait_for(|| {
+        a.snapshot().listening.is_some_and(|view| {
+            view.phase == "playing"
+                && view
+                    .track
+                    .is_some_and(|track| (track.start_position - 8.).abs() < 0.01)
+        })
+    });
+    assert!(station.alive.load(Ordering::Acquire));
+}
+
+#[test]
+fn replacing_queue_keeps_connected_rooms_and_resumes_a_paused_station() {
+    let temp = tempfile::tempdir().unwrap();
+    let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+    let store = Arc::new(
+        Store::new(
+            temp.path().join("library"),
+            resources.join(format!("bin/ffmpeg{}", std::env::consts::EXE_SUFFIX)),
+        )
+        .unwrap(),
+    );
+    let first =
+        crate::media::read_media(&store, &resources.join("demo/01 - Glass Horizon.mp3"), None)
+            .unwrap();
+    let second = crate::media::read_media(
+        &store,
+        &resources.join("demo/02 - After the Rain.mp3"),
+        None,
+    )
+    .unwrap();
+    let host = node();
+    let _host = Cleanup(host.clone());
+    let station = station::launch(
+        host.clone(),
+        station::BroadcastRequest {
+            name: "Queue switch".into(),
+            item_ids: vec![first.id.clone()],
+            mode: "once".into(),
+            minutes: 1,
+            finish_track: true,
+            resume_books: false,
+            start_position: None,
+            shuffle: false,
+            play_here: false,
+            output_device: None,
+        },
+        vec![first],
+        store,
+    )
+    .unwrap();
+    *host.station.lock().unwrap() = Some(station.clone());
+    let receiver = headless_listener(&host);
+    let _receiver = Cleanup(receiver.clone());
+    wait_for(|| {
+        receiver
+            .snapshot()
+            .listening
+            .is_some_and(|view| view.phase == "playing")
+    });
+    station.pause(true).unwrap();
+    wait_for(|| {
+        receiver
+            .snapshot()
+            .listening
+            .is_some_and(|view| view.phase == "paused")
+    });
+    let station_id = station.id.clone();
+    station.replace_queue(vec![second.clone()]).unwrap();
+    wait_for(|| {
+        receiver.snapshot().listening.is_some_and(|view| {
+            view.phase == "playing" && view.track.is_some_and(|track| track.title == second.title)
+        })
+    });
+    assert_eq!(
+        host.station.lock().unwrap().as_ref().unwrap().id,
+        station_id
+    );
+    assert!(station.alive.load(Ordering::Acquire));
+    assert_eq!(station.subscribers.lock().unwrap().len(), 1);
+}
+
+#[test]
 fn host_transport_pauses_every_room_resumes_at_the_same_position_and_navigates_tracks() {
     let temp = tempfile::tempdir().unwrap();
     let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
@@ -175,6 +329,7 @@ fn host_transport_pauses_every_room_resumes_at_the_same_position_and_navigates_t
             minutes: 1,
             finish_track: true,
             resume_books: false,
+            start_position: None,
             shuffle: false,
             play_here: false,
             output_device: None,
@@ -372,6 +527,7 @@ fn decoded_music_reaches_two_tcp_rooms_and_once_mode_ends() {
         minutes: 1,
         finish_track: true,
         resume_books: false,
+        start_position: None,
         shuffle: false,
         play_here: false,
         output_device: None,
@@ -526,6 +682,7 @@ fn audiobook_broadcast_seeks_and_saves_the_presented_position() {
         minutes: 1,
         finish_track: true,
         resume_books: true,
+        start_position: None,
         shuffle: false,
         play_here: false,
         output_device: None,

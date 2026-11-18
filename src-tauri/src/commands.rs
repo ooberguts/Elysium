@@ -19,6 +19,42 @@ pub async fn get_library(store: State<'_, Arc<Store>>) -> Result<Library, String
 }
 
 #[tauri::command]
+pub async fn fill_video_artwork(store: State<'_, Arc<Store>>) -> Result<usize, String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut updated = 0;
+        for item in store.library()?.items {
+            if !matches!(item.kind.as_str(), "movie" | "tv")
+                || item.artwork.is_some()
+                || !item.available
+                || item.overrides.contains_key("artwork")
+            {
+                continue;
+            }
+            if let Ok(read) = media::read_media(&store, Path::new(&item.path), None) {
+                if let Some(artwork) = read.artwork {
+                    if store
+                        .change_item(&item.id, |current| {
+                            if current.artwork.is_none()
+                                && !current.overrides.contains_key("artwork")
+                            {
+                                current.artwork = Some(artwork);
+                            }
+                        })
+                        .is_ok()
+                    {
+                        updated += 1;
+                    }
+                }
+            }
+        }
+        Ok(updated)
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command]
 pub async fn add_source(
     path: String,
     kind: String,
@@ -39,12 +75,16 @@ pub async fn add_source(
             return Err("Select a folder to add a source".into());
         }
         let full = canonical.to_string_lossy().to_string();
-        if let Some(existing) = s
+        if let Some(mut existing) = s
             .library()?
             .sources
             .into_iter()
             .find(|source| source.path == full)
         {
+            if existing.kind != kind {
+                existing.kind = kind;
+                s.save_source(&existing)?;
+            }
             return Ok(existing);
         }
         let source = Source {
@@ -105,6 +145,19 @@ pub fn cancel_conversion(store: State<'_, Arc<Store>>) {
 }
 
 #[tauri::command]
+pub fn remove_from_library(ids: Vec<String>, store: State<'_, Arc<Store>>) -> Result<(), String> {
+    if ids.len() > 10_000 {
+        return Err("Remove up to 10,000 items at a time".into());
+    }
+    if store.scanning.swap(true, Ordering::SeqCst) {
+        return Err("Wait for the library scan to finish before removing items".into());
+    }
+    let result = store.remove_items(&ids);
+    store.scanning.store(false, Ordering::SeqCst);
+    result
+}
+
+#[tauri::command]
 pub async fn import_files(
     paths: Vec<String>,
     kind: Option<String>,
@@ -137,6 +190,7 @@ pub async fn import_files(
                     if let Some(art) = &item.artwork {
                         let _ = app.asset_protocol_scope().allow_file(art);
                     }
+                    s.include_path(&item.path)?;
                     s.save_item(&item)?;
                     count += 1;
                 }
@@ -249,6 +303,23 @@ pub async fn set_rating(
     tauri::async_runtime::spawn_blocking(move || metadata::set_rating(&s, &id, rating))
         .await
         .map_err(err)?
+}
+
+#[tauri::command]
+pub async fn set_artist_artwork(
+    artist: String,
+    path: Option<String>,
+    store: State<'_, Arc<Store>>,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let artwork = path
+            .map(|p| metadata::prepare_cover(&store, Path::new(&p)))
+            .transpose()?;
+        store.set_artist_artwork(&artist, artwork.as_deref())
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]
