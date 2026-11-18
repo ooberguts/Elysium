@@ -97,7 +97,28 @@ it('broadcasts books by title, author and ordered collection without including s
     'chapter2',
     'chapter1',
   ]);
-  expect(broadcastSelection(books, 'album', albumKey(a), [], 'audiobook').map((i) => i.id)).toEqual(
-    ['chapter1', 'chapter2'],
-  );
+  expect(
+    broadcastSelection(
+      books,
+      'album',
+      albumKey(books.items[books.items.length - 1]),
+      [],
+      'audiobook',
+    ).map((i) => i.id),
+  ).toEqual(['chapter1', 'chapter2']);
+});
+
+it('broadcasts every performer on a compilation without an album artist', () => {
+  const compilation = {
+    ...library,
+    items: [
+      song('a', { artist: 'First', albumArtist: '' }),
+      song('b', { artist: 'Second', albumArtist: '' }),
+    ],
+  };
+  expect(
+    broadcastSelection(compilation, 'album', albumKey(compilation.items[0]), []).map(
+      (item) => item.id,
+    ),
+  ).toEqual(['a', 'b']);
 });

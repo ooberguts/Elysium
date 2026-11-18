@@ -138,6 +138,7 @@ pub fn run() {
             commands::cancel_conversion,
             commands::create_playlist,
             commands::update_playlist,
+            commands::edit_playlist,
             commands::delete_playlist,
             commands::save_settings,
             commands::export_library,

@@ -410,6 +410,7 @@ pub fn create_playlist(
         name: name.trim().chars().take(150).collect(),
         rule,
         item_ids: vec![],
+        artwork: None,
     };
     store.save_playlist(&list)?;
     Ok(list)
@@ -432,6 +433,31 @@ pub fn update_playlist(
         .filter(|id| known.contains(id))
         .collect();
     store.save_playlist(&list)
+}
+
+#[tauri::command]
+pub async fn edit_playlist(
+    id: String,
+    name: String,
+    change_artwork: bool,
+    artwork_path: Option<String>,
+    store: State<'_, Arc<Store>>,
+) -> Result<(), String> {
+    let store = store.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let artwork = if change_artwork {
+            Some(
+                artwork_path
+                    .map(|path| metadata::prepare_cover(&store, Path::new(&path)))
+                    .transpose()?,
+            )
+        } else {
+            None
+        };
+        store.edit_playlist(&id, &name, artwork)
+    })
+    .await
+    .map_err(err)?
 }
 
 #[tauri::command]
@@ -604,6 +630,7 @@ pub async fn import_playlist(
             .to_string(),
         rule: None,
         item_ids: ids,
+        artwork: None,
     };
     store.save_playlist(&list)?;
     Ok(list)

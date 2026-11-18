@@ -58,6 +58,7 @@ import {
   MediaCards,
   Modal,
   PlaylistDialog,
+  PlaylistEditDialog,
   Rating,
   SourcesView,
   TrackTable,
@@ -67,6 +68,7 @@ import { chooseFiles, chooseFolder, desktop, loadLibrary, native, open, savePath
 import {
   albumGroups,
   albumKey,
+  albumArtworkItem,
   artistItems,
   filterItems,
   isAudio,
@@ -82,6 +84,7 @@ import { useAudioCapture, type AudioDevice } from './visualizers/capture';
 import { AudioSourceDialog } from './visualizers/AudioSourceDialog';
 import { useBroadcast } from './broadcast/useBroadcast';
 import { BroadcastPanel } from './broadcast/BroadcastPanel';
+import { BroadcastPreferences } from './broadcast/BroadcastPreferences';
 import { BroadcastTransport } from './broadcast/BroadcastTransport';
 import { Audiobooks } from './Audiobooks';
 import { MetadataDialog } from './MetadataEditor';
@@ -94,7 +97,6 @@ const BroadcastVideo = lazy(() =>
   import('./broadcast/VideoPlayer').then((m) => ({ default: m.BroadcastVideo })),
 );
 import {
-  DEFAULT_VISUALIZER,
   VISUALIZER_PRESETS,
   getVisualizer,
   stepVisualizer,
@@ -137,7 +139,7 @@ const names: Record<string, string> = {
   recent: 'Recently added',
   sources: 'Sources',
   jellyfin: 'Jellyfin',
-  broadcast: 'LAN broadcast',
+  broadcast: 'Listen to broadcasts',
   settings: 'Preferences',
 };
 const subtitles: Record<string, string> = {
@@ -168,7 +170,7 @@ export default function App() {
     [queueOpen, setQueueOpen] = useState(false),
     [nowPlaying, setNowPlaying] = useState(false),
     [visualizerOnly, setVisualizerOnly] = useState(false),
-    [visualMode, setVisualMode] = useState(DEFAULT_VISUALIZER),
+    [visualMode, setVisualMode] = useState('album-art'),
     [visualQuality, setVisualQuality] = useState<VisualizerQuality>('balanced'),
     [visualAuto, setVisualAuto] = useState(false),
     [visualInfo, setVisualInfo] = useState(true),
@@ -181,6 +183,10 @@ export default function App() {
     [eqOpen, setEqOpen] = useState(false);
   const [sourceDialog, setSourceDialog] = useState(false),
     [playlistDialog, setPlaylistDialog] = useState(false),
+    [playlistEdit, setPlaylistEdit] = useState<Playlist | null>(null),
+    [playlistDelete, setPlaylistDelete] = useState<Playlist | null>(null),
+    [playlistDeleteBusy, setPlaylistDeleteBusy] = useState(false),
+    [lanNotice, setLanNotice] = useState(false),
     [infoIds, setInfoIds] = useState<string[]>([]),
     [detailId, setDetailId] = useState<string | null>(null),
     [help, setHelp] = useState(false);
@@ -200,7 +206,9 @@ export default function App() {
     normalSize = useRef<PhysicalSize | null>(null),
     search = useRef<HTMLInputElement>(null),
     initialized = useRef(false),
-    selectedAnchor = useRef(0);
+    selectedAnchor = useRef(0),
+    lanPreferences = useRef<HTMLElement>(null),
+    focusLanPreferences = useRef(false);
   const notify = useCallback((message: string) => {
     setToast(message);
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -257,7 +265,7 @@ export default function App() {
     for (const invitation of broadcast.state.invitations) {
       if (!seenInvitations.current.has(invitation.id)) {
         seenInvitations.current.add(invitation.id);
-        notify(`${invitation.name} invited this room. Open LAN broadcast to join.`);
+        notify(`${invitation.name} invited this room. Open Listen to broadcasts to join.`);
       }
     }
   }, [broadcast.state.invitations, notify]);
@@ -287,11 +295,11 @@ export default function App() {
       remaining[0] === current.id
         ? remaining
         : [current.id, ...remaining.filter((id) => id !== current.id)];
+    if (!broadcast.state.enabled) {
+      setLanNotice(true);
+      return;
+    }
     try {
-      if (!broadcast.state.enabled)
-        await broadcast.call('broadcast_enable', {
-          name: library.settings.lanRoomName || 'This computer',
-        });
       const position = player.element()?.currentTime ?? playback.position;
       player.pause();
       pausedForHandoff = true;
@@ -312,10 +320,35 @@ export default function App() {
       });
       setVisualizerOnly(false);
       setNowPlaying(true);
-      notify('Broadcast started. Other rooms can join from LAN broadcast.');
+      notify('Broadcast started. Other rooms can join from Listen to broadcasts.');
     } catch {
       if (wasPlaying && pausedForHandoff) void player.toggle();
     }
+  }
+  async function setLanEnabled(enabled: boolean, name: string) {
+    try {
+      await broadcast.call(
+        enabled ? 'broadcast_enable' : 'broadcast_disable',
+        enabled ? { name: name.trim() || 'This computer' } : undefined,
+      );
+      await refresh();
+      notify(enabled ? 'LAN broadcasting is on.' : 'LAN broadcasting is off.');
+    } catch {
+      /* The broadcast hook reports the error. */
+    }
+  }
+  function openLanPreferences() {
+    setLanNotice(false);
+    focusLanPreferences.current = true;
+    if (view === 'settings') {
+      requestAnimationFrame(() => {
+        lanPreferences.current?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+        lanPreferences.current
+          ?.querySelector<HTMLInputElement>('input[role="switch"]')
+          ?.focus({ preventScroll: true });
+        focusLanPreferences.current = false;
+      });
+    } else navigate('settings');
   }
   const [showControls, setShowControls] = useState(true);
   useEffect(() => {
@@ -342,6 +375,15 @@ export default function App() {
     nowPlaying &&
     !broadcastVideoStage &&
     (broadcast.active || visualizerOnly || visualExternal || !current || isAudio(current));
+  const visualCurrentItem = broadcast.active
+    ? library.items.find(
+        (item) =>
+          item.title === broadcast.track?.title &&
+          item.album === broadcast.track?.album &&
+          (item.artist === broadcast.track?.artist || !broadcast.track?.artist),
+      )
+    : current;
+  const visualArtworkItem = albumArtworkItem(visualCurrentItem, allItems);
   const visualActive = broadcast.active
     ? broadcast.running
     : visualExternal
@@ -433,6 +475,15 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (view === 'settings' && focusLanPreferences.current && lanPreferences.current) {
+      focusLanPreferences.current = false;
+      lanPreferences.current.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      lanPreferences.current
+        .querySelector<HTMLInputElement>('input[role="switch"]')
+        ?.focus({ preventScroll: true });
+    }
+  }, [view]);
+  useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
     if (!desktop) {
@@ -442,6 +493,11 @@ export default function App() {
     void loadLibrary()
       .then((data) => {
         setLibrary(data);
+        if (data.settings.lanEnabled === 'true') {
+          void broadcast
+            .call('broadcast_enable', { name: data.settings.lanRoomName || 'This computer' })
+            .catch(() => {});
+        }
         if (
           data.items.some(
             (item) =>
@@ -459,7 +515,13 @@ export default function App() {
         }
         setTheme(data.settings.theme || 'silver');
         setCompact(data.settings.compact === 'true');
-        setVisualMode(getVisualizer(data.settings.visualMode).id);
+        setVisualMode(
+          !data.settings.visualMode ||
+            data.settings.visualMode === 'album-art' ||
+            (!data.settings.visualDefaultVersion && data.settings.visualMode === 'current')
+            ? 'album-art'
+            : getVisualizer(data.settings.visualMode).id,
+        );
         setVisualQuality(data.settings.visualQuality === 'high' ? 'high' : 'balanced');
         setVisualAuto(data.settings.visualAuto === 'true');
         setVisualInfo(data.settings.visualInfo !== 'false');
@@ -500,6 +562,7 @@ export default function App() {
           theme,
           compact: String(compact),
           visualMode,
+          visualDefaultVersion: '2',
           visualQuality,
           visualAuto: String(visualAuto),
           visualInfo: String(visualInfo),
@@ -739,6 +802,7 @@ export default function App() {
     ratings?: boolean;
     playlists?: boolean;
     queueIndex?: number;
+    playlist?: Playlist;
   };
   const [contextMenu, setContextMenu] = useState<MenuState | null>(null);
   function openItemMenu(
@@ -756,12 +820,30 @@ export default function App() {
       y: 'clientY' in event ? event.clientY : rect.top + 20,
     });
   }
+  function openPlaylistMenu(playlist: Playlist, event: React.MouseEvent | React.KeyboardEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    setContextMenu({
+      playlist,
+      items: [],
+      x: 'clientX' in event ? event.clientX : rect.left + 20,
+      y: 'clientY' in event ? event.clientY : rect.top + 20,
+    });
+  }
   function openTrackMenu(item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) {
     const targets = contextSelection([...filtered, ...allItems], selected, item);
     if (!selected.has(item.id)) setSelected(new Set([item.id]));
     openItemMenu(targets, event);
   }
   function menuActions(menu: MenuState): MenuAction[] {
+    if (menu.playlist) {
+      const playlist = menu.playlist;
+      return [
+        { label: 'Edit playlist…', run: () => setPlaylistEdit(playlist) },
+        { label: 'Delete playlist…', divider: true, run: () => setPlaylistDelete(playlist) },
+      ];
+    }
     const local = menu.items.every((i) => !i.serverId);
     if (menu.playlists)
       return library.playlists
@@ -1240,73 +1322,21 @@ export default function App() {
         <ContextMenu
           {...contextMenu}
           title={
-            contextMenu.playlists
-              ? 'Add to playlist'
-              : contextMenu.ratings
-                ? 'Set rating'
-                : contextMenu.items.length > 1
-                  ? `${contextMenu.items.length} selected items`
-                  : contextMenu.items[0]?.title || 'Library actions'
+            contextMenu.playlist
+              ? contextMenu.playlist.name
+              : contextMenu.playlists
+                ? 'Add to playlist'
+                : contextMenu.ratings
+                  ? 'Set rating'
+                  : contextMenu.items.length > 1
+                    ? `${contextMenu.items.length} selected items`
+                    : contextMenu.items[0]?.title || 'Library actions'
           }
           actions={menuActions(contextMenu)}
           close={() => setContextMenu(null)}
         />
       )}
       <audio ref={player.audio} crossOrigin="anonymous" preload="metadata" />
-      <header className="app-header">
-        <div className="brand">
-          <div className="brand-mark">e</div>
-          <span>elysium</span>
-          <span className="version-label" title={updates.build?.commit}>
-            {updates.build
-              ? `${updates.build.shortCommit}${updates.build.dirty ? ' · local' : ''}`
-              : 'LOCAL PLAYER'}
-          </span>
-        </div>
-        <div className="header-menus">
-          <details>
-            <summary>
-              Library
-              <ChevronDown size={11} />
-            </summary>
-            <div className="context-menu">
-              <button onClick={() => void importFiles()}>
-                <Plus size={15} />
-                Add files…
-              </button>
-              <button onClick={() => setSourceDialog(true)}>
-                <FolderOpen size={15} />
-                Add folder…
-              </button>
-              <button onClick={() => setPlaylistDialog(true)}>
-                <ListMusic size={15} />
-                New playlist…
-              </button>
-              <button onClick={() => void importPlaylist()}>
-                <Upload size={15} />
-                Import M3U playlist…
-              </button>
-              <hr />
-              <button onClick={() => void exportBackup()}>
-                <Download size={15} />
-                Export library backup…
-              </button>
-              <button onClick={() => void restoreBackup()}>
-                <Upload size={15} />
-                Restore backup…
-              </button>
-            </div>
-          </details>
-          <button onClick={() => navigate('settings')}>View</button>
-          <button onClick={() => setHelp(true)}>Help</button>
-        </div>
-        <div className="header-right">
-          <span className="local-label">
-            <span />
-            YOUR PERSONAL MEDIA CENTER
-          </span>
-        </div>
-      </header>
       <div className="main-toolbar">
         <div className="library-location">
           <button
@@ -1407,7 +1437,7 @@ export default function App() {
               onClick={() => navigate('broadcast')}
             >
               <Radio size={17} />
-              <span>LAN broadcast</span>
+              <span>Listen to broadcasts</span>
               {!!broadcast.state.invitations.length ? (
                 <span className="nav-new">{broadcast.state.invitations.length}</span>
               ) : (
@@ -1443,7 +1473,11 @@ export default function App() {
                 key={p.id}
                 className={!nowPlaying && view === `playlist:${p.id}` ? 'active' : ''}
                 onClick={() => navigate(`playlist:${p.id}`)}
-                onContextMenu={(e) => openItemMenu(playlistItems(p, allItems), e)}
+                onContextMenu={(e) => openPlaylistMenu(p, e)}
+                onKeyDown={(e) => {
+                  if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))
+                    openPlaylistMenu(p, e);
+                }}
                 onDragOver={(e) => {
                   if (!p.rule) e.preventDefault();
                 }}
@@ -1460,7 +1494,13 @@ export default function App() {
                   }
                 }}
               >
-                {p.rule ? <Sparkles size={15} /> : <ListMusic size={15} />}
+                {p.artwork ? (
+                  <Artwork image={p.artwork} label={p.name} className="playlist-nav-art" />
+                ) : p.rule ? (
+                  <Sparkles size={15} />
+                ) : (
+                  <ListMusic size={15} />
+                )}
                 <span>{p.name}</span>
               </button>
             ))}
@@ -1470,6 +1510,34 @@ export default function App() {
                 Your first playlist
               </button>
             )}
+          </div>
+          <div className="sidebar-group sidebar-library-actions">
+            <details>
+              <summary>
+                <FolderOpen size={16} /> Library actions <ChevronDown size={13} />
+              </summary>
+              <div className="sidebar-action-items">
+                <button onClick={() => void importFiles()}>
+                  <Plus size={15} /> Add files
+                </button>
+                <button onClick={() => setSourceDialog(true)}>
+                  <FolderOpen size={15} /> Add folder
+                </button>
+                <button onClick={() => void importPlaylist()}>
+                  <Upload size={15} /> Import playlist
+                </button>
+                <button onClick={() => void exportBackup()}>
+                  <Download size={15} /> Export backup
+                </button>
+                <button onClick={() => void restoreBackup()}>
+                  <Upload size={15} /> Restore backup
+                </button>
+              </div>
+            </details>
+            <button onClick={() => setHelp(true)}>
+              <CircleHelp size={16} />
+              <span>Help</span>
+            </button>
           </div>
           <div className="sidebar-group sources-nav">
             <span className="sidebar-label">CONNECTED</span>
@@ -1597,7 +1665,29 @@ export default function App() {
                 </button>
               </div>
             </div>
-            {musicStage && !mini && (
+            {musicStage && !mini && visualMode === 'album-art' && (
+              <div className="album-art-stage">
+                <Artwork
+                  item={visualArtworkItem}
+                  label={
+                    visualArtworkItem?.album ||
+                    broadcast.track?.album ||
+                    broadcast.track?.title ||
+                    'Album artwork'
+                  }
+                />
+                <div className="album-art-stage-copy">
+                  <strong>
+                    {broadcast.active
+                      ? broadcast.track?.title || broadcast.name
+                      : current?.title || 'Nothing playing yet'}
+                  </strong>
+                  <span>{broadcast.active ? broadcast.track?.artist : current?.artist}</span>
+                  <small>{broadcast.active ? broadcast.track?.album : current?.album}</small>
+                </div>
+              </div>
+            )}
+            {musicStage && !mini && visualMode !== 'album-art' && (
               <Visualizer
                 player={player}
                 mode={visualMode}
@@ -1610,22 +1700,27 @@ export default function App() {
                 large
               />
             )}
-            <div className="visualizer-identity">
-              <span>
-                {VISUALIZER_FAMILIES.find((f) => f.id === getVisualizer(visualMode).family)?.label}
-              </span>
-              <strong>{getVisualizer(visualMode).name}</strong>
-              <small>
-                <i className={visualActive ? 'live-dot' : ''} />
-                {visualActive
-                  ? !broadcast.active && visualExternal && capture.level < 0.005
-                    ? 'LISTENING FOR MUSIC'
-                    : 'REACTING TO YOUR MUSIC'
-                  : 'PAUSED'}
-              </small>
-            </div>
+            {visualMode !== 'album-art' && (
+              <div className="visualizer-identity">
+                <span>
+                  {
+                    VISUALIZER_FAMILIES.find((f) => f.id === getVisualizer(visualMode).family)
+                      ?.label
+                  }
+                </span>
+                <strong>{getVisualizer(visualMode).name}</strong>
+                <small>
+                  <i className={visualActive ? 'live-dot' : ''} />
+                  {visualActive
+                    ? !broadcast.active && visualExternal && capture.level < 0.005
+                      ? 'LISTENING FOR MUSIC'
+                      : 'REACTING TO YOUR MUSIC'
+                    : 'PAUSED'}
+                </small>
+              </div>
+            )}
             <div
-              className={`now-playing-art ${visualInfo && !visualExternal && !broadcast.active && current ? '' : 'hidden'}`}
+              className={`now-playing-art ${visualMode !== 'album-art' && visualInfo && !visualExternal && !broadcast.active && current ? '' : 'hidden'}`}
             >
               <Artwork item={current} />
               <div>
@@ -1644,6 +1739,7 @@ export default function App() {
                 <p>Opening your library…</p>
               </div>
             ) : !allItems.length &&
+              !view.startsWith('playlist:') &&
               !['sources', 'settings', 'jellyfin', 'broadcast', 'audiobooks'].includes(view) ? (
               <EmptyCollection
                 add={() => setSourceDialog(true)}
@@ -1654,15 +1750,12 @@ export default function App() {
             ) : view === 'broadcast' ? (
               <BroadcastPanel
                 broadcast={broadcast}
-                library={library}
-                queue={playback.queue}
                 prepare={prepareBroadcast}
                 visualize={() => {
                   setVisualizerOnly(!broadcast.state.video);
                   setNowPlaying(true);
                 }}
-                createPlaylist={() => setPlaylistDialog(true)}
-                addMusic={() => setSourceDialog(true)}
+                preferences={openLanPreferences}
               />
             ) : view === 'audiobooks' ? (
               <Audiobooks
@@ -1779,6 +1872,14 @@ export default function App() {
               <div className="settings-view">
                 <p className="eyebrow">MAKE YOURSELF AT HOME</p>
                 <h1>Preferences</h1>
+                <section ref={lanPreferences} className="lan-preferences" tabIndex={-1}>
+                  <BroadcastPreferences
+                    broadcast={broadcast}
+                    library={library}
+                    setEnabled={setLanEnabled}
+                    refresh={refresh}
+                  />
+                </section>
                 <section>
                   <h2>Appearance</h2>
                   <div className="theme-choices">
@@ -2040,12 +2141,20 @@ export default function App() {
                             </button>
                           </h3>
                           <p>
-                            <button
-                              className="artist-link"
-                              onClick={() => openArtist(group.artist)}
-                            >
-                              {group.artist}
-                            </button>
+                            {group.artist === 'Various Artists' &&
+                            !group.items.some(
+                              (item) =>
+                                item.artist === group.artist || item.albumArtist === group.artist,
+                            ) ? (
+                              group.artist
+                            ) : (
+                              <button
+                                className="artist-link"
+                                onClick={() => openArtist(group.artist)}
+                              >
+                                {group.artist}
+                              </button>
+                            )}
                           </p>
                         </article>
                       ))}
@@ -2074,28 +2183,42 @@ export default function App() {
             ) : (
               <>
                 <div className="view-header">
-                  <div>
-                    <p className="eyebrow">
-                      {selectedPlaylist
-                        ? selectedPlaylist.rule
-                          ? 'SMART PLAYLIST'
-                          : 'YOUR PLAYLIST'
-                        : 'YOUR LIBRARY'}
-                    </p>
-                    <h1>{selectedPlaylist?.name || names[view]}</h1>
-                    <p>
-                      {selectedPlaylist
-                        ? `${filtered.length} items · ${seconds(filtered.reduce((sum, i) => sum + i.duration, 0))}`
-                        : subtitles[view]}
-                    </p>
-                    {selectedPlaylist && !selectedPlaylist.rule && (
-                      <p>
-                        Drag songs to arrange them in list view with Playlist order selected and
-                        filters cleared.
-                      </p>
+                  <div className={selectedPlaylist ? 'playlist-heading' : undefined}>
+                    {selectedPlaylist && (
+                      <Artwork
+                        item={baseItems.find((item) => item.artwork) || baseItems[0]}
+                        image={selectedPlaylist.artwork || undefined}
+                        label={selectedPlaylist.name}
+                      />
                     )}
+                    <div>
+                      <p className="eyebrow">
+                        {selectedPlaylist
+                          ? selectedPlaylist.rule
+                            ? 'SMART PLAYLIST'
+                            : 'YOUR PLAYLIST'
+                          : 'YOUR LIBRARY'}
+                      </p>
+                      <h1>{selectedPlaylist?.name || names[view]}</h1>
+                      <p>
+                        {selectedPlaylist
+                          ? `${filtered.length} items · ${seconds(filtered.reduce((sum, i) => sum + i.duration, 0))}`
+                          : subtitles[view]}
+                      </p>
+                      {selectedPlaylist && !selectedPlaylist.rule && (
+                        <p>
+                          Drag songs to arrange them in list view with Playlist order selected and
+                          filters cleared.
+                        </p>
+                      )}
+                    </div>
                   </div>
                   <div className="view-header-actions">
+                    {selectedPlaylist && (
+                      <button onClick={() => setPlaylistEdit(selectedPlaylist)}>
+                        Edit playlist
+                      </button>
+                    )}
                     <button className="primary" onClick={() => void importFiles()}>
                       <Plus size={16} />
                       Add media
@@ -2281,12 +2404,20 @@ export default function App() {
                             </button>
                           </h3>
                           <p>
-                            <button
-                              className="artist-link"
-                              onClick={() => openArtist(group.artist)}
-                            >
-                              {group.artist}
-                            </button>
+                            {group.artist === 'Various Artists' &&
+                            !group.items.some(
+                              (item) =>
+                                item.artist === group.artist || item.albumArtist === group.artist,
+                            ) ? (
+                              group.artist
+                            ) : (
+                              <button
+                                className="artist-link"
+                                onClick={() => openArtist(group.artist)}
+                              >
+                                {group.artist}
+                              </button>
+                            )}
                           </p>
                           <small>{group.items.length} tracks</small>
                         </article>
@@ -2642,7 +2773,11 @@ export default function App() {
               </div>
             </div>
             <div className="footer-visual">
-              <Visualizer player={player} active={!mini && !nowPlaying} />
+              {visualMode === 'album-art' ? (
+                <Artwork item={visualArtworkItem} />
+              ) : (
+                <Visualizer player={player} active={!mini && !nowPlaying} mode={visualMode} />
+              )}
             </div>
             <div className="footer-tools">
               {volumeControls}
@@ -2809,44 +2944,48 @@ export default function App() {
               >
                 <Sparkles size={15} />
               </button>
-              <label title="Flows to another immersive scene on a musical accent after 45–80 seconds; stays still during silence or reduced motion">
-                <input
-                  type="checkbox"
-                  checked={visualAuto}
-                  onChange={(e) => setVisualAuto(e.target.checked)}
-                />
-                Auto show
-              </label>
-              {!visualExternal && !broadcast.active && (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={visualInfo}
-                    onChange={(e) => setVisualInfo(e.target.checked)}
-                  />
-                  Track info
-                </label>
+              {visualMode !== 'album-art' && (
+                <>
+                  <label title="Flows to another immersive scene on a musical accent after 45–80 seconds; stays still during silence or reduced motion">
+                    <input
+                      type="checkbox"
+                      checked={visualAuto}
+                      onChange={(e) => setVisualAuto(e.target.checked)}
+                    />
+                    Auto show
+                  </label>
+                  {!visualExternal && !broadcast.active && (
+                    <label>
+                      <input
+                        type="checkbox"
+                        checked={visualInfo}
+                        onChange={(e) => setVisualInfo(e.target.checked)}
+                      />
+                      Track info
+                    </label>
+                  )}
+                  <label className="intensity-control">
+                    Intensity
+                    <input
+                      type="range"
+                      aria-label="Visualizer intensity"
+                      min="0.5"
+                      max="1.5"
+                      step="0.05"
+                      value={visualIntensity}
+                      onChange={(e) => setVisualIntensity(Number(e.target.value))}
+                    />
+                  </label>
+                  <select
+                    aria-label="Visualizer performance"
+                    value={visualQuality}
+                    onChange={(e) => setVisualQuality(e.target.value as VisualizerQuality)}
+                  >
+                    <option value="balanced">30 fps</option>
+                    <option value="high">60 fps</option>
+                  </select>
+                </>
               )}
-              <label className="intensity-control">
-                Intensity
-                <input
-                  type="range"
-                  aria-label="Visualizer intensity"
-                  min="0.5"
-                  max="1.5"
-                  step="0.05"
-                  value={visualIntensity}
-                  onChange={(e) => setVisualIntensity(Number(e.target.value))}
-                />
-              </label>
-              <select
-                aria-label="Visualizer performance"
-                value={visualQuality}
-                onChange={(e) => setVisualQuality(e.target.value as VisualizerQuality)}
-              >
-                <option value="balanced">30 fps</option>
-                <option value="high">60 fps</option>
-              </select>
             </div>
           ))}
       </footer>
@@ -2969,6 +3108,71 @@ export default function App() {
           close={() => setSourceDialog(false)}
           add={addSource}
         />
+      )}
+      {lanNotice && (
+        <Modal title="LAN broadcasting is off" close={() => setLanNotice(false)}>
+          <p className="dialog-intro">
+            Turn on LAN broadcasting in Preferences to share your current playback with other rooms.
+          </p>
+          <div className="dialog-actions">
+            <button onClick={() => setLanNotice(false)}>Not now</button>
+            <button className="primary" onClick={openLanPreferences}>
+              Open Preferences
+            </button>
+          </div>
+        </Modal>
+      )}
+      {playlistEdit && (
+        <PlaylistEditDialog
+          playlist={playlistEdit}
+          fallback={playlistItems(playlistEdit, allItems).find((item) => item.artwork)}
+          close={() => setPlaylistEdit(null)}
+          save={async (name, changeArtwork, artworkPath) => {
+            await native('edit_playlist', {
+              id: playlistEdit.id,
+              name,
+              changeArtwork,
+              artworkPath,
+            });
+            await refresh();
+            notify('Playlist updated');
+          }}
+        />
+      )}
+      {playlistDelete && (
+        <Modal
+          title="Delete playlist?"
+          close={() => {
+            if (!playlistDeleteBusy) setPlaylistDelete(null);
+          }}
+        >
+          <p className="dialog-intro">
+            Delete “{playlistDelete.name}”? Your songs and files will stay in your library.
+          </p>
+          <div className="dialog-actions">
+            <button disabled={playlistDeleteBusy} onClick={() => setPlaylistDelete(null)}>
+              No
+            </button>
+            <button
+              className="primary"
+              disabled={playlistDeleteBusy}
+              onClick={() => {
+                setPlaylistDeleteBusy(true);
+                void native('delete_playlist', { id: playlistDelete.id })
+                  .then(async () => {
+                    if (view === `playlist:${playlistDelete.id}`) navigate('music');
+                    setPlaylistDelete(null);
+                    await refresh();
+                    notify('Playlist deleted');
+                  })
+                  .catch((error) => notify(String(error)))
+                  .finally(() => setPlaylistDeleteBusy(false));
+              }}
+            >
+              {playlistDeleteBusy ? 'Deleting…' : 'Yes, delete playlist'}
+            </button>
+          </div>
+        </Modal>
       )}
       {playlistDialog && (
         <PlaylistDialog

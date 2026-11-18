@@ -21,7 +21,7 @@ import {
   WifiOff,
   MonitorPlay,
 } from 'lucide-react';
-import { artworkUrl, chooseFolder } from './bridge';
+import { artworkUrl, chooseFolder, open } from './bridge';
 import { seconds } from './domain';
 import type { MediaItem, Playlist, Source } from './types';
 
@@ -559,6 +559,120 @@ export function PlaylistDialog({
           </button>
           <button className="primary" disabled={!name.trim()}>
             Create playlist
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+export function PlaylistEditDialog({
+  playlist,
+  fallback,
+  close,
+  save,
+}: {
+  playlist: Playlist;
+  fallback?: MediaItem;
+  close: () => void;
+  save: (name: string, changeArtwork: boolean, artworkPath: string | null) => Promise<void>;
+}) {
+  const [name, setName] = useState(playlist.name);
+  const [changeArtwork, setChangeArtwork] = useState(false);
+  const [path, setPath] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  return (
+    <Modal title="Edit playlist" close={close}>
+      <form
+        onSubmit={async (event) => {
+          event.preventDefault();
+          setBusy(true);
+          setError('');
+          try {
+            await save(name, changeArtwork, path);
+            close();
+          } catch (error) {
+            setError(String(error));
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <div className="playlist-edit-art">
+          <Artwork
+            item={fallback}
+            image={!changeArtwork ? playlist.artwork || undefined : undefined}
+            label={playlist.name}
+          />
+          <div>
+            <strong>Playlist image</strong>
+            <p>
+              {changeArtwork
+                ? path
+                  ? path.split(/[\\/]/).pop()
+                  : 'Album artwork will be used when available.'
+                : playlist.artwork
+                  ? 'Custom image'
+                  : 'Using album artwork when available.'}
+            </p>
+          </div>
+        </div>
+        <label>
+          Playlist name
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            required
+            maxLength={150}
+            autoFocus
+          />
+        </label>
+        <div className="cover-actions">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              void open({
+                multiple: false,
+                title: 'Choose playlist image',
+                filters: [{ name: 'Playlist artwork', extensions: ['jpg', 'jpeg', 'png'] }],
+              })
+                .then((selected) => {
+                  if (typeof selected === 'string') {
+                    setPath(selected);
+                    setChangeArtwork(true);
+                  }
+                })
+                .catch((error) => setError(String(error)))
+            }
+          >
+            Choose image…
+          </button>
+          {(playlist.artwork || (changeArtwork && path)) && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => {
+                setPath(null);
+                setChangeArtwork(true);
+              }}
+            >
+              Use album artwork
+            </button>
+          )}
+        </div>
+        {error && (
+          <p className="error-message" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="dialog-actions">
+          <button type="button" disabled={busy} onClick={close}>
+            Cancel
+          </button>
+          <button className="primary" disabled={busy || !name.trim()}>
+            {busy ? 'Saving…' : 'Save playlist'}
           </button>
         </div>
       </form>

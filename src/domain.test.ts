@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   albumGroups,
   albumKey,
+  albumArtworkItem,
   artistItems,
   filterItems,
   nextIndex,
@@ -86,10 +87,37 @@ describe('library organization', () => {
   });
   it('album destinations select a full release without mixing namesakes from other artists', () => {
     const album = [media('two', { track: 2 }), media('one', { track: 1 })];
-    const other = media('other', { artist: 'Other artist' });
+    const other = media('other', { artist: 'Other artist', albumArtist: 'Other artist' });
     const items = viewItems(`album:${albumKey(album[0])}`, EMPTY_LIBRARY, [...album, other]);
     expect(albumGroups(items)[0].items.map((item) => item.id)).toEqual(['one', 'two']);
     expect(items).toHaveLength(2);
+  });
+  it('groups tracks from different artists into the same album when the album artist is missing', () => {
+    const tracks = [
+      media('one', { artist: 'First', track: 1 }),
+      media('two', { artist: 'Second', track: 2 }),
+    ];
+    expect(albumGroups(tracks)).toHaveLength(1);
+    expect(albumGroups(tracks)[0].artist).toBe('Various Artists');
+    expect(
+      viewItems(`album:${albumKey(tracks[0])}`, EMPTY_LIBRARY, tracks).map((item) => item.id),
+    ).toEqual(['one', 'two']);
+  });
+  it('uses a consistent available album cover across tracks', () => {
+    const first = media('one', { artwork: 'cover-one' });
+    const second = media('two', { artist: 'Guest', artwork: 'cover-two' });
+    const noCover = media('three', { artist: 'Guest', artwork: null });
+    expect(albumArtworkItem(second, [first, second, noCover])).toBe(first);
+    expect(albumArtworkItem(noCover, [first, second, noCover])).toBe(first);
+    expect(albumArtworkItem(noCover, [noCover])).toBe(noCover);
+  });
+  it('keeps unnamed albums from unrelated artists separate', () => {
+    expect(
+      albumGroups([
+        media('a', { album: '', artist: 'First' }),
+        media('b', { album: '', artist: 'Second' }),
+      ]),
+    ).toHaveLength(2);
   });
   it('searches all words across fields and applies column filters together', () => {
     const a = media('a'),
@@ -101,7 +129,7 @@ describe('library organization', () => {
     const groups = albumGroups([
       media('a', { disc: 2 }),
       media('b', { disc: 1 }),
-      media('c', { artist: 'Another Artist' }),
+      media('c', { artist: 'Another Artist', albumArtist: 'Another Artist' }),
     ]);
     expect(groups).toHaveLength(2);
     expect(groups[0].items.map((i) => i.id)).toEqual(['b', 'a']);

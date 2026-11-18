@@ -113,7 +113,20 @@ export function unique(values: string[]): string[] {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 export function albumKey(item: MediaItem): string {
-  return `${item.albumArtist || item.artist}\u0000${item.album || 'Untitled album'}`;
+  return `${item.albumArtist || (item.album ? '' : item.artist)}\u0000${item.album || 'Untitled album'}`;
+}
+/** Pick one consistent cover for a release, even when individual tracks have different covers. */
+export function albumArtworkItem(
+  item: MediaItem | undefined,
+  items: MediaItem[],
+): MediaItem | undefined {
+  if (!item || item.kind !== 'music' || !item.album) return item;
+  return (
+    items.find(
+      (candidate) =>
+        candidate.kind === 'music' && candidate.artwork && albumKey(candidate) === albumKey(item),
+    ) || item
+  );
 }
 export function albumGroups(
   items: MediaItem[],
@@ -126,7 +139,11 @@ export function albumGroups(
   return [...groups].map(([key, group]) => ({
     key,
     name: group[0].album || 'Untitled album',
-    artist: group[0].albumArtist || group[0].artist || 'Unknown artist',
+    artist:
+      group[0].albumArtist ||
+      (new Set(group.map((item) => item.artist).filter(Boolean)).size > 1
+        ? 'Various Artists'
+        : group[0].artist || 'Unknown artist'),
     items: group.sort(
       (a, b) => a.disc - b.disc || a.track - b.track || a.title.localeCompare(b.title),
     ),

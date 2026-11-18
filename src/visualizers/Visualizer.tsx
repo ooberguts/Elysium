@@ -14,15 +14,20 @@ import type { ExternalAudioFeed } from './capture';
 import { ShowClock } from './motion';
 
 export function VisualizerOptions() {
-  return VISUALIZER_FAMILIES.map((family) => (
-    <optgroup key={family.id} label={family.label}>
-      {VISUALIZER_PRESETS.filter((p) => p.family === family.id).map((p) => (
-        <option key={p.id} value={p.id}>
-          {p.name}
-        </option>
+  return (
+    <>
+      <option value="album-art">Album artwork</option>
+      {VISUALIZER_FAMILIES.map((family) => (
+        <optgroup key={family.id} label={family.label}>
+          {VISUALIZER_PRESETS.filter((p) => p.family === family.id).map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </optgroup>
       ))}
-    </optgroup>
-  ));
+    </>
+  );
 }
 
 export function Visualizer({

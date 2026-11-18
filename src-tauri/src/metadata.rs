@@ -62,7 +62,20 @@ pub fn edit(
             return Err(format!("{key} must be a positive whole number"));
         }
     }
+    let reset_video_artwork = matches!(item.kind.as_str(), "movie" | "tv")
+        && changes.get("artwork").is_some_and(|value| value.is_empty());
+    let fallback_artwork = if reset_video_artwork {
+        crate::media::read_raw_media(store, Path::new(&item.path), None)
+            .ok()
+            .and_then(|raw| raw.artwork)
+    } else {
+        None
+    };
     item.overrides.extend(changes.clone());
+    if reset_video_artwork {
+        item.overrides.remove("artwork");
+        item.artwork = fallback_artwork.clone();
+    }
     apply_overrides(&mut item);
     if item.title.trim().is_empty() {
         return Err("Please enter a title".into());
@@ -72,6 +85,10 @@ pub fn edit(
     }
     store.change_item(id, |latest| {
         latest.overrides.extend(changes);
+        if reset_video_artwork {
+            latest.overrides.remove("artwork");
+            latest.artwork = fallback_artwork;
+        }
         apply_overrides(latest);
     })
 }
@@ -645,6 +662,57 @@ mod tests {
             .unwrap_err()
             .contains("changed since"));
         assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    }
+    #[test]
+    fn video_cover_can_be_set_and_reset_to_automatic_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("film.mp4");
+        let resources = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+        std::fs::copy(resources.join("demo/The Aurora Study.mp4"), &path).unwrap();
+        let ffmpeg = resources.join(format!("bin/ffmpeg{}", std::env::consts::EXE_SUFFIX));
+        if !ffmpeg.is_file() {
+            return;
+        }
+        let store = Store::new(dir.path().join("data"), ffmpeg).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let item = crate::media::read_media(&store, &path, None).unwrap();
+        let automatic = item.artwork.clone().expect("automatic video still");
+        store.save_item(&item).unwrap();
+        let picture_dir = dir.path().join("pictures");
+        std::fs::create_dir_all(&picture_dir).unwrap();
+        let poster = cover_fixture(&store, &picture_dir);
+        let edited = edit(
+            &store,
+            &item.id,
+            HashMap::from([("artwork".into(), poster.clone())]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(edited.artwork.as_deref(), Some(poster.as_str()));
+        assert_eq!(
+            crate::media::read_media(&store, &path, None)
+                .unwrap()
+                .artwork
+                .as_deref(),
+            Some(poster.as_str())
+        );
+        let reset = edit(
+            &store,
+            &item.id,
+            HashMap::from([("artwork".into(), String::new())]),
+            false,
+        )
+        .unwrap();
+        assert_eq!(reset.artwork.as_deref(), Some(automatic.as_str()));
+        assert!(!reset.overrides.contains_key("artwork"));
+        assert_eq!(
+            crate::media::read_media(&store, &path, None)
+                .unwrap()
+                .artwork
+                .as_deref(),
+            Some(automatic.as_str())
+        );
+        assert_eq!(std::fs::read(path).unwrap(), original);
     }
     fn cover_fixture(store: &Store, directory: &Path) -> String {
         use base64::Engine;

@@ -80,9 +80,16 @@ export function CollectionPage({
           <p>
             {!artist && (
               <>
-                <button className="artist-link" onClick={() => openArtist(albumArtist)}>
-                  {albumArtist}
-                </button>
+                {albumArtist === 'Various Artists' &&
+                !items.some(
+                  (item) => item.artist === albumArtist || item.albumArtist === albumArtist,
+                ) ? (
+                  <span>{albumArtist}</span>
+                ) : (
+                  <button className="artist-link" onClick={() => openArtist(albumArtist)}>
+                    {albumArtist}
+                  </button>
+                )}
                 <span> · </span>
                 {first?.year && <>{first.year} · </>}
               </>

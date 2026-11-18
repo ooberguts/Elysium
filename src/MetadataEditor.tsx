@@ -62,7 +62,7 @@ export function MetadataDialog({
   async function chooseCover() {
     const path = await open({
       multiple: false,
-      title: 'Choose front cover artwork',
+      title: video ? 'Choose video cover artwork' : 'Choose front cover artwork',
       filters: [{ name: 'Cover artwork', extensions: ['jpg', 'jpeg', 'png'] }],
     });
     if (typeof path !== 'string') return;
@@ -181,15 +181,13 @@ export function MetadataDialog({
           >
             Details
           </button>
-          {!video && (
-            <button
-              type="button"
-              className={tab === 'artwork' ? 'active' : ''}
-              onClick={() => setTab('artwork')}
-            >
-              Cover art
-            </button>
-          )}
+          <button
+            type="button"
+            className={tab === 'artwork' ? 'active' : ''}
+            onClick={() => setTab('artwork')}
+          >
+            Cover art
+          </button>
           <button
             type="button"
             className={tab === 'source' ? 'active' : ''}
@@ -360,14 +358,18 @@ export function MetadataDialog({
                   {Object.hasOwn(changes, 'artwork')
                     ? changes.artwork
                       ? 'New front cover'
-                      : 'No front cover'
+                      : video
+                        ? 'Automatic video frame after saving'
+                        : 'No front cover'
                     : 'Unchanged'}
                 </span>
               </div>
             </div>
             <p>
               {single
-                ? 'Choose the artwork that represents this song.'
+                ? video
+                  ? 'Choose a cover for this video. Without a custom cover, Elysium uses a still frame.'
+                  : 'Choose the artwork that represents this song.'
                 : `Apply one front cover to all ${items.length} selected items.`}
             </p>
             <div className="cover-actions">
@@ -379,7 +381,7 @@ export function MetadataDialog({
                 {coverBusy ? 'Reading artwork…' : 'Choose cover image…'}
               </button>
               <button type="button" disabled={remote || busy} onClick={() => update('artwork', '')}>
-                Remove front cover
+                {video ? 'Use automatic video frame' : 'Remove front cover'}
               </button>
               {Object.hasOwn(changes, 'artwork') && (
                 <button type="button" disabled={busy} onClick={() => reset('artwork')}>
@@ -388,7 +390,9 @@ export function MetadataDialog({
               )}
             </div>
             <small>
-              JPEG or PNG, up to 8 MB. Back covers and other embedded pictures are preserved.
+              {video
+                ? 'JPEG or PNG, up to 8 MB. Covers are stored in Elysium; video files stay unchanged.'
+                : 'JPEG or PNG, up to 8 MB. Back covers and other embedded pictures are preserved.'}
             </small>
           </section>
         ) : (
@@ -498,7 +502,9 @@ export function MetadataDialog({
                   {key === 'artwork'
                     ? next
                       ? 'Chosen image'
-                      : 'Remove front cover'
+                      : video
+                        ? 'Use automatic video frame'
+                        : 'Remove front cover'
                     : key === 'rating'
                       ? next === '0'
                         ? 'Unrated'

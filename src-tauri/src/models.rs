@@ -58,6 +58,8 @@ pub struct Playlist {
     pub name: String,
     pub rule: Option<String>,
     pub item_ids: Vec<String>,
+    #[serde(default)]
+    pub artwork: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

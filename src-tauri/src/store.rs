@@ -264,6 +264,31 @@ impl Store {
         .map_err(err)?;
         Ok(())
     }
+    pub fn edit_playlist(
+        &self,
+        id: &str,
+        name: &str,
+        artwork: Option<Option<String>>,
+    ) -> Result<(), String> {
+        if name.trim().is_empty() {
+            return Err("Give the playlist a name".into());
+        }
+        let conn = self.db.lock().map_err(err)?;
+        let json: String = conn
+            .query_row("SELECT data FROM playlists WHERE id=?1", [id], |r| r.get(0))
+            .map_err(err)?;
+        let mut list: Playlist = serde_json::from_str(&json).map_err(err)?;
+        list.name = name.trim().chars().take(150).collect();
+        if let Some(image) = artwork {
+            list.artwork = image;
+        }
+        conn.execute(
+            "UPDATE playlists SET data=?2 WHERE id=?1",
+            params![id, serde_json::to_string(&list).map_err(err)?],
+        )
+        .map_err(err)?;
+        Ok(())
+    }
     pub fn playlist(&self, id: &str) -> Result<Playlist, String> {
         let conn = self.db.lock().map_err(err)?;
         let json: String = conn
@@ -325,6 +350,7 @@ mod tests {
                 name: "List".into(),
                 rule: None,
                 item_ids: vec![item.id.clone(), item.id.clone()],
+                artwork: None,
             })
             .unwrap();
         store.remove_items(std::slice::from_ref(&item.id)).unwrap();
@@ -339,6 +365,27 @@ mod tests {
         assert!(!reopened.is_excluded(&item.path).unwrap());
     }
     #[test]
+    fn playlist_edits_preserve_tracks_and_support_legacy_artwork() {
+        let legacy = r#"{"id":"legacy","name":"Old","rule":null,"itemIds":["track"]}"#;
+        let playlist: Playlist = serde_json::from_str(legacy).unwrap();
+        assert!(playlist.artwork.is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path().to_owned(), PathBuf::new()).unwrap();
+        store.save_playlist(&playlist).unwrap();
+        store
+            .edit_playlist("legacy", " Renamed ", Some(Some("/art/cover".into())))
+            .unwrap();
+        store.edit_playlist("legacy", "Final", None).unwrap();
+        drop(store);
+        let store = Store::new(dir.path().to_owned(), PathBuf::new()).unwrap();
+        let saved = store.playlist("legacy").unwrap();
+        assert_eq!(saved.name, "Final");
+        assert_eq!(saved.item_ids, vec!["track"]);
+        assert_eq!(saved.artwork.as_deref(), Some("/art/cover"));
+        store.edit_playlist("legacy", "Final", Some(None)).unwrap();
+        assert!(store.playlist("legacy").unwrap().artwork.is_none());
+    }
+    #[test]
     fn persists_preferences_and_playlists() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path().to_owned(), PathBuf::new()).unwrap();
@@ -347,6 +394,7 @@ mod tests {
             name: "Night drives".into(),
             rule: None,
             item_ids: vec![],
+            artwork: None,
         };
         store.save_playlist(&playlist).unwrap();
         drop(store);

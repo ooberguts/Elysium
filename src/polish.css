@@ -27,7 +27,7 @@
   --welcome-glow: #e2eee6;
   --visual-color: #529d8b;
   --player-height: 112px;
-  grid-template-rows: 44px 54px minmax(0, 1fr) 24px var(--player-height);
+  grid-template-rows: 54px minmax(0, 1fr) 24px var(--player-height);
 }
 .app[data-theme='graphite'] {
   --background: #121c1e;
@@ -1322,4 +1322,158 @@ meter::-webkit-meter-optimum-value {
 }
 .theater-mode .video-stage video {
   height: 100%;
+}
+
+.sidebar-library-actions details > summary,
+.sidebar-action-items > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  box-shadow: none;
+  cursor: pointer;
+  font-size: 12px;
+}
+.sidebar-library-actions details > summary {
+  list-style: none;
+}
+.sidebar-library-actions details > summary::-webkit-details-marker {
+  display: none;
+}
+.sidebar-library-actions details > summary svg:last-child {
+  margin-left: auto;
+}
+.sidebar-library-actions details > summary:hover,
+.sidebar-action-items > button:hover {
+  background: var(--selection);
+}
+.sidebar-action-items > button {
+  padding-left: 25px;
+  color: var(--muted);
+}
+
+.album-art-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 12px 30px 32px;
+}
+.album-art-stage > .artwork {
+  width: min(42vh, 42vw, 430px);
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  border-radius: 12px;
+  box-shadow: 0 18px 60px #0008;
+}
+.album-art-stage-copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  text-align: center;
+  color: #dfeae8;
+}
+.album-art-stage-copy strong {
+  font-size: 19px;
+}
+.album-art-stage-copy span,
+.album-art-stage-copy small {
+  color: #aac2bc;
+}
+.footer-visual > .artwork {
+  height: 100%;
+  aspect-ratio: 1;
+  margin-left: auto;
+  border-radius: 4px;
+}
+
+.playlist-heading {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+}
+.playlist-heading > .artwork {
+  width: 94px;
+  height: 94px;
+  flex: none;
+  border-radius: 8px;
+}
+.playlist-heading > .artwork .art-caption {
+  font-size: 10px;
+}
+.playlist-heading > div:last-child {
+  min-width: 0;
+}
+.sidebar-group > button .playlist-nav-art {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  border-radius: 3px;
+}
+.playlist-nav-art .art-caption,
+.playlist-nav-art .art-mark {
+  display: none;
+}
+.playlist-edit-art {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.playlist-edit-art > .artwork {
+  width: 80px;
+  height: 80px;
+  flex: none;
+  border-radius: 7px;
+}
+.playlist-edit-art .art-caption {
+  font-size: 9px;
+}
+.playlist-edit-art p {
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.lan-preferences {
+  scroll-margin-top: 16px;
+  outline: none;
+}
+.lan-preferences-fields {
+  display: grid;
+  gap: 14px;
+  max-width: 340px;
+  margin-top: 18px;
+}
+.lan-preferences-fields > label:not(.checkbox-label) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.lan-preferences-fields > label small {
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+.lan-preferences-fields > button {
+  justify-self: start;
+}
+.lan-preferences-fields .checkbox-label {
+  align-items: flex-start;
+  margin: 0;
 }

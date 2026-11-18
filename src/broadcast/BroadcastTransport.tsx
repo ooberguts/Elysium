@@ -172,7 +172,7 @@ export function BroadcastTransport({
             aria-label={
               host ? 'Broadcast settings · broadcasting' : 'Broadcast settings · listening'
             }
-            title="LAN broadcast"
+            title="Listen to broadcasts"
             onClick={settings}
           >
             <Radio size={18} />

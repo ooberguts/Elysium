@@ -131,7 +131,7 @@ hr {
   background: var(--background);
   color: var(--text);
   display: grid;
-  grid-template-rows: 46px 87px minmax(0, 1fr) 26px 102px;
+  grid-template-rows: 87px minmax(0, 1fr) 26px 102px;
   height: 100%;
   width: 100%;
   position: relative;
@@ -2601,7 +2601,7 @@ summary::-webkit-details-marker {
 /* Playback belongs to one bottom control strip. The top is library navigation. */
 .app {
   --player-height: 118px;
-  grid-template-rows: 46px 47px minmax(0, 1fr) 26px var(--player-height);
+  grid-template-rows: 47px minmax(0, 1fr) 26px var(--player-height);
 }
 .app.expanded-player {
   --player-height: 160px;

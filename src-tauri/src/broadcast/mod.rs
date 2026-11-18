@@ -438,7 +438,11 @@ fn enable(app: tauri::AppHandle, store: Arc<Store>, name: String) -> Result<Arc<
         station: Mutex::new(None),
         client: Mutex::new(None),
         invitations: Mutex::new(Vec::new()),
-        allow_requests: AtomicBool::new(false),
+        allow_requests: AtomicBool::new(
+            settings
+                .get("lanAllowRequests")
+                .is_some_and(|value| value == "true"),
+        ),
         media_busy: AtomicBool::new(true),
         output_device: Mutex::new(
             settings
@@ -544,13 +548,38 @@ pub async fn broadcast_enable(
     name: String,
 ) -> Result<(), String> {
     let store = store.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || enable(app, store, name).map(|_| ()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        enable(app, store.clone(), name)?;
+        store
+            .db
+            .lock()
+            .map_err(err)?
+            .execute(
+                "INSERT OR REPLACE INTO settings(key,value) VALUES('lanEnabled','true')",
+                [],
+            )
+            .map_err(err)?;
+        Ok(())
+    })
+    .await
+    .map_err(err)?
 }
 #[tauri::command]
-pub fn broadcast_disable(state: tauri::State<BroadcastState>) {
+pub fn broadcast_disable(
+    state: tauri::State<BroadcastState>,
+    store: tauri::State<Arc<Store>>,
+) -> Result<(), String> {
+    store
+        .db
+        .lock()
+        .map_err(err)?
+        .execute(
+            "INSERT OR REPLACE INTO settings(key,value) VALUES('lanEnabled','false')",
+            [],
+        )
+        .map_err(err)?;
     state.shutdown();
+    Ok(())
 }
 #[tauri::command]
 pub fn broadcast_settings(
@@ -579,6 +608,7 @@ pub fn broadcast_settings(
             ("lanOutputDevice", output_device.clone().unwrap_or_default()),
             ("lanVolume", volume.clamp(0., 1.).to_string()),
             ("lanDelayMs", delay_ms.clamp(-500, 500).to_string()),
+            ("lanAllowRequests", allow_requests.to_string()),
         ] {
             db.execute(
                 "INSERT OR REPLACE INTO settings(key,value) VALUES(?1,?2)",

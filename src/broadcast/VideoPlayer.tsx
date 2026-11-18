@@ -179,7 +179,7 @@ export function BroadcastVideo({
       <div className="stage-top">
         <button onClick={back}>
           <ArrowLeft size={15} />
-          LAN broadcast
+          Listen to broadcasts
         </button>
         <strong>{b.track?.title || b.name}</strong>
         <button onClick={toggleTheater}>{theater ? 'Exit theater' : 'Theater'}</button>

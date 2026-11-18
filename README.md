@@ -9,7 +9,7 @@ A personal music, audiobook, and video library built with TypeScript, React, Tau
 Use the [GitHub installation scripts](#install-from-github) below to install dependencies, build Elysium, and put it in your applications folder. You can also open a packaged **Elysium.app** on macOS or the Windows installer from this private repository's Releases/Actions page. macOS test packages are locally signed and are not Apple-notarized; Windows test packages are unsigned.
 
 1. Choose **Try the sample library**. Elysium includes three original synthesized songs, a short generated movie, and a sample TV episode.
-2. Open **Songs** and double-click a song. Try the column browser, search, queue, equalizer, and Now Playing visualizers.
+2. Open **Songs** and double-click a song. Try search, the queue, equalizer, and Now Playing visualizers.
 3. Open **Movies** or **TV shows** to test video playback, seeking, subtitles, and resume.
 4. Use **Add a library folder** for your own media. A NAS share must first be mounted in Finder or File Explorer; Windows UNC paths can also be entered in Add Folder.
 5. Select items, right-click, and choose **Edit metadata**. Library-only edits are the default. Explicit MP3/FLAC file writes make backups and verify the encoded audio before replacing a file. Use the **Stop** button in the bottom player before writing the current item's file.
@@ -21,19 +21,19 @@ The app never moves or deletes your source media. Compatibility conversion creat
 - Windows and macOS installation scripts with dependency setup, dedicated source/tool folders, logs, and exact commit selection. Preferences shows the installed commit, checks GitHub on startup or on demand, and launches the update installer.
 - Persistent SQLite library with songs, albums, artists, audiobooks, movies, and TV episodes.
 - Artist pages with album artwork, a discography grouped by album, and songs from both their releases and compilation appearances. Album covers and titles open a full album page with its ordered track list. Back/forward buttons connect library, artist, and album pages.
-- Classic Silver and Graphite themes, compact song rows, virtualized song tables, column browsing, text search, sorting, favorites, and ratings. All playback controls live in the bottom strip; the top is reserved for navigation and search.
+- Classic Silver and Graphite themes, compact song rows, virtualized song tables, text search, sorting, favorites, and ratings. All playback controls live in the bottom strip; the top is reserved for navigation and search.
 - Local files, external drives, mounted network folders, incremental rescans, scan cancellation, offline retention, and source rebinding.
 - Music and video playback, seek, speed, shuffle, repeat, persistent queue, resume checkpoints, and basic OS Media Session integration.
 - A compact always-on-top player that keeps the same playback session alive when the window changes size.
 - Eighteen audio-reactive GPU scenes, including ray-marched 3D forms, a perspective tunnel, luminous ribbons, star fields, and audio instruments. Includes bloom, feedback trails, preset dissolves, a searchable visual gallery, theater view, intensity, previous/next/random, music-aware Auto show, and 30/60 fps targets.
 - Standalone visualizer with native system-output and input-device capture. Music playing in Chrome, YouTube Music, or another app can drive the show without a library track.
-- LAN broadcast with automatic discovery, direct-address joining, room invitations, timestamped audio, independent room volume/output, and once/repeat/timed library programming.
-- Static playlists, drag-to-playlist, four smart playlist rules, M3U/M3U8 import, and M3U8 export.
+- LAN broadcast from the media controls, with automatic discovery, direct-address joining, room invitations, synchronized seek, and independent room volume/output.
+- Static and smart playlists with custom images, drag-to-playlist, drag to reorder, right-click editing and deletion, M3U/M3U8 import, and M3U8 export.
 - Single and batch metadata editing with shared cover artwork, album grouping, ratings, per-field Undo, and a change preview; user overrides survive rescans.
 - Context menus follow the song, selected group, album, artist, playlist, video, audiobook, or queue entry under the pointer.
 - MusicBrainz match lookup with a request queue, rate limiting, session cache, and manual acceptance.
 - Recoverable embedded MP3/FLAC writes, encoded-audio verification, and backup restoration with conflict detection.
-- Local movie/episode NFO reading and export, local cover/poster artwork, and UTF-8 SRT/WebVTT subtitles.
+- Local movie/episode NFO reading and export, custom cover artwork with generated still-frame fallback, and UTF-8 SRT/WebVTT subtitles.
 - Jellyfin sign-in, up to 5,000 audio/movie/episode items per connection, authenticated direct-play streaming, and progress reporting. Tokens remain in native process memory and sign-out clears the session.
 - JSON library backup and merge restore.
 
@@ -50,6 +50,8 @@ To collect songs into one album:
 3. Open **Cover art → Choose cover image** to apply one front cover to the group. JPEG and PNG are accepted up to 8 MB, 8192 pixels per side, and 32 megapixels. Removing/replacing a front cover preserves other embedded pictures.
 4. Review the affected items and changed fields. Choose **Elysium library** for personal organization or **Library + compatible files** to embed changes into MP3/FLAC files too. Only explicitly changed fields are written. Stop playback before choosing file writes for the open item.
 
+To edit or delete a playlist, right-click it in the sidebar. **Edit playlist** can change its name or attach an image; without one, the playlist uses available album artwork. Deletion asks for confirmation and keeps your songs and original files. Right-click a song and choose **Remove from library** to remove the entry while retaining the file; explicit file import adds it again.
+
 Song-row ratings automatically save in the library and attempt compatible file embedding. MP3 uses Elysium's own ID3 **POPM** owner (`ratings@elysium.local`, an identifier, not a network address), preserving other owners and counters. Its 1–5 values are 1/64/128/196/255; unrated is 0. FLAC uses a **RATING** comment at 20/40/60/80/100, or 0. Existing MP3 ratings prefer Elysium, then Windows Media Player, then another owner. The [ID3 specification](https://id3.org/id3v2.3.0#Popularimeter), [Mp3tag field mapping](https://docs.mp3tag.de/mapping/), and [Picard mapping](https://picard-docs.musicbrainz.org/en/latest/appendices/tag_mapping.html) informed this implementation; rating conventions vary among players. MP4's advisory rating is not used for personal stars.
 
 Other formats keep these edits in Elysium. Read-only files, unsupported specialized tags, and file verification failures also retain personal edits in the library and produce a report. Changes survive rescans and app restarts. File writes retain a backup, verify unrelated metadata and the encoded audio, and replace the original only after verification. **Source & recovery** can restore the most recent successful file backup. Library overrides remain your personal organization.
@@ -60,11 +62,11 @@ Open **Audiobooks** and choose **Add audiobooks** or **Add folder**. M4B files a
 
 **Continue listening** resumes the last saved position, including after switching books or quitting the app. Checkpoints are written while playing and on pause/seek, with synchronous local recovery between database saves. The player offers **−15s**, **+30s**, and **0.5×–2×** speed. Completed books can be played again from the beginning. Progress is local to each installation.
 
-To share a book around the house, choose **LAN broadcast → Audiobooks**. Broadcast a book, author, book collection (album), playlist, genre, queue, or the whole shelf. Books default to **Play once** and **Resume books from their saved position**. Turn resume off to start at the beginning; repeated passes start from the beginning. The broadcaster saves the position actually presented on the broadcast clock, not the decoder's buffered position. Returning to the audiobook shelf continues from there. Other rooms join live and can pause/resume locally, just like video. Their local book checkpoints are unaffected.
+To share a book around the house, start the book and choose **Broadcast** in the media controls. The broadcast starts from the current position. The broadcaster saves the position actually presented on the broadcast clock, not the decoder's buffered position. Other rooms join live and can pause/resume locally. Their local book checkpoints are unaffected.
 
 ## Live video broadcasts
 
-In **LAN broadcast**, choose **Video**, then a movie, TV series, playlist, genre, queue, or all local videos. Once/repeat/timed programming works like music. Join from another Elysium computer, then choose **Watch video**. The sender encodes up to 1080p, 720p, and 480p (never exceeding source height), with a six-second startup buffer.
+Start a local movie or episode and choose **Broadcast** in the media controls. On another Elysium computer, open **Listen to broadcasts**, join, and choose **Watch video**. The sender encodes up to 1080p, 720p, and 480p (never exceeding source height), with a six-second startup buffer. Open a video’s **Get Info → Cover art** to choose a custom cover or return to its automatic video still.
 
 **Auto · keep live** adapts picture quality to the connection. High, Medium, and Low cap the chosen stream to a fixed rendition. Audio follows the shared room clock; picture playback corrects drift toward that clock. On a listener, **Pause here** pauses only this room and **Resume live** returns to the current broadcast moment, including if the program changed while paused. On the host, **Pause broadcast** freezes the broadcast for every room; resuming starts again at that position after buffering. Each room has its own volume, output, timing adjustment, and video quality. Local subtitles are not transmitted. Video broadcasting uses local library files, not browser/screen capture or protected streaming services.
 
@@ -72,7 +74,7 @@ Video needs a current WebView with Media Source Extensions and H.264 support; en
 
 ## Retro visualizers
 
-Open **Visualizer** in the sidebar, even with an empty library. Choose **Atmospheres** to browse actual render previews, or use the preset picker, arrows, and random button below the stage. **Theater** fills the window; controls fade after three idle seconds and return on pointer movement or keyboard input. Start with **Chromatic Current** for flowing iridescent color, **Fractal Sanctuary** for continuously changing Julia branches, or **Aurora Cathedral** for layered silk curtains. **Prismatic Alchemy** and **Cosmic Bloom** also have evolving organic forms. **Auto show** waits 45–80 seconds and changes scenes on a musical accent or quiet passage, excluding meters and avoiding immediate repeats. **Intensity** adjusts the light output. Left/right arrow keys change presets, **T** toggles theater, and **Escape** returns to the library. Space controls Elysium playback or stops device listening when external audio is selected.
+Open **Visualizer** in the sidebar, even with an empty library. Album artwork is the default; a chosen visualizer remains selected as songs change. Choose **Atmospheres** to browse actual render previews, or use the preset picker, arrows, and random button below the stage. **Theater** fills the window; controls fade after three idle seconds and return on pointer movement or keyboard input. Start with **Chromatic Current** for flowing iridescent color, **Fractal Sanctuary** for continuously changing Julia branches, or **Aurora Cathedral** for layered silk curtains. **Prismatic Alchemy** and **Cosmic Bloom** also have evolving organic forms. **Auto show** waits 45–80 seconds and changes scenes on a musical accent or quiet passage, excluding meters and avoiding immediate repeats. **Intensity** adjusts the light output. Left/right arrow keys change presets, **T** toggles theater, and **Escape** returns to the library. Space controls Elysium playback or stops device listening when external audio is selected.
 
 To visualize YouTube Music or another app:
 
@@ -102,13 +104,12 @@ These are original Elysium interpretations of the era, not the original Apple/Mi
 
 ## LAN broadcast
 
-Open **LAN broadcast** in the sidebar on each computer and enable it with a room name. The same feature is implemented for macOS and Windows. LAN audio is off on launch; starting a broadcast also enables it. Room name, output, volume, and timing adjustment are saved locally.
+On each computer, turn on **Preferences → LAN broadcasting → Enable LAN broadcasting**. This setting is remembered across app launches. Room name, audio output, volume, timing, and automatic invitation acceptance are also configured there.
 
-1. On the broadcaster, choose a **playlist, artist, album, genre, current queue, or all music**. Use **New playlist** to create one, then add songs from the library selection toolbar. The broadcast uses a snapshot of the selected songs in playlist order, including intentional repeats.
-2. Choose **Keep repeating**, **Play once**, or **Play for a set time** (1 minute–7 days). Timed runs can finish the current song or stop at the exact audio-time limit. Shuffle reshuffles each pass. Unavailable tracks are skipped; a completely unavailable selection stops with an explanation.
-3. Leave **Play on this computer too** selected for synchronized local playback, or turn it off for a silent radio host. The bottom media controls become the broadcast controls: **Previous**, **Pause/Resume**, **Next**, and **Stop** affect every listener. Pause freezes the current position; resume re-buffers from that point. These controls also work when the host is silent. Shuffle chooses one order for the session, making Previous/Next consistent across repeat cycles.
-
-While listening, the same bottom strip shows the incoming track and live position. **Pause** silences only your room; **Resume live** rejoins the live position. **Stop** leaves the broadcast. Previous/Next are reserved for the host, and a listener cannot resume a broadcast paused by its host. Volume and mute always affect only your own room. The Space key follows the active broadcast from any library page. 4. On another computer, choose the discovered station and **Join**. If discovery is blocked, copy the broadcaster's displayed LAN address and use **Join by address**. New listeners tune in to the current moment. 5. To bring rooms in from the broadcaster, select them under **Bring in more rooms**. An idle room with **Accept playback requests while idle** enabled joins automatically. Other idle rooms get a 60-second invitation to accept. Busy rooms keep their current session. Listeners can leave independently; the broadcaster can disconnect a listener. 6. Each room chooses its own audio output and volume. Stop its session to change outputs. **Timing adjustment** (-500 to +500 ms) compensates for additional speaker/receiver latency; positive values delay that room. The visualizer follows the native audio being played in that room.
+1. Play a local song, audiobook, movie, or episode and choose **Broadcast** in the bottom media controls. If LAN broadcasting is off, the app offers a link to the preference. The broadcast starts at the current position and plays the remaining local queue once.
+2. On another computer, open **Listen to broadcasts**, choose a discovered broadcast, and select **Join**. If discovery is blocked, enter the broadcaster’s LAN address under **Join by address**. New listeners tune in to the current position.
+3. The host can open **Listen to broadcasts → Share your current broadcast** to copy an address, invite idle rooms, or disconnect listeners. An idle room with **Accept playback requests while idle** enabled joins automatically; otherwise it receives an invitation.
+4. The host controls playback, seeking, and stopping from the media bar. Choosing another library item switches the active broadcast while keeping rooms connected. A listener can pause its own room and resume live; volume affects only that room. Video quality is set in Preferences or the video player.
 
 The implementation sends 48 kHz, stereo, 16-bit PCM in timestamped chunks with approximately 1.2 seconds of lookahead. Clients estimate clock offset and render against predicted device playback time to compensate drift. This uses about **1.54 Mbit/s per listener**, plus transport overhead. A lost listener connection retries for up to 30 seconds. Actual room-to-room acoustic alignment still requires testing on your Mac/Windows devices, particularly Bluetooth outputs with hidden latency.
 
@@ -124,7 +125,7 @@ This is a deliberate test-release backend, with a separate native-player evaluat
 
 Jellyfin is direct-play only. The app does not request server transcoding yet, does not persist server sessions across restarts, and does not edit remote metadata or favorites. Local progress is durable; failed remote progress requests currently require another successful playback checkpoint rather than a durable retry queue. A real server is required to qualify the integration against your server's version and codecs.
 
-Online movie/poster enrichment, AcoustID fingerprinting, lyric providers, artwork editing, arbitrary smart-playlist rules, iTunes XML import, WMP `.wmz` import, projectM, a separate floating video window, and Linux qualification remain planned work. Metadata writes are enabled only for MP3/FLAC files whose tag data can be preserved; specialized frames may require library-only edits. Batch writes report per-file failures rather than claiming the whole batch succeeded.
+Online movie/poster enrichment, AcoustID fingerprinting, lyric providers, arbitrary smart-playlist rules, iTunes XML import, WMP `.wmz` import, projectM, a separate floating video window, and Linux qualification remain planned work. Metadata writes are enabled only for MP3/FLAC files whose tag data can be preserved; specialized frames may require library-only edits. Batch writes report per-file failures rather than claiming the whole batch succeeded.
 
 ## Install from GitHub
 

@@ -66,6 +66,7 @@ export interface Playlist {
   name: string;
   rule: string | null;
   itemIds: string[];
+  artwork?: string | null;
 }
 export interface Library {
   items: MediaItem[];

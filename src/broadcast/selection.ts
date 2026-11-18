@@ -1,9 +1,11 @@
 import type { Library, MediaItem } from '../types';
-import { viewItems } from '../domain';
+import { albumKey as musicAlbumKey, viewItems } from '../domain';
 export type SourceKind =
   'playlist' | 'artist' | 'album' | 'genre' | 'queue' | 'all' | 'movie' | 'series' | 'book';
 export const albumKey = (item: MediaItem) =>
-  JSON.stringify([item.albumArtist || item.artist, item.album]);
+  item.kind === 'music'
+    ? musicAlbumKey(item)
+    : JSON.stringify([item.albumArtist || item.artist, item.album]);
 export function broadcastSelection(
   library: Library,
   kind: SourceKind,
