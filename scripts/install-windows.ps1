@@ -156,7 +156,7 @@ try {
         Invoke-Checked 'npm.cmd' @('run', 'prepare:media')
         # Prevent an old installer from being mistaken for a successful new build.
         if (Test-Path 'src-tauri\target\release\bundle\nsis') { Remove-Item 'src-tauri\target\release\bundle\nsis' -Recurse -Force }
-        Invoke-Checked 'npm.cmd' @('run', 'tauri', '--', 'build', '--locked', '--bundles', 'nsis')
+        Invoke-Checked 'npm.cmd' @('run', 'tauri', '--', 'build', '--bundles', 'nsis', '--', '--locked')
     } finally { Pop-Location }
     $Installers = @(Get-ChildItem "$Source\src-tauri\target\release\bundle\nsis\*.exe")
     if ($Installers.Count -ne 1) { throw 'Expected one new NSIS installer after building.' }

@@ -119,7 +119,7 @@ echo "Building Elysium · commit $TARGET (the first build can take several minut
   cd "$SOURCE"
   npm ci --no-audit --no-fund
   npm run prepare:media
-  npm run tauri -- build --locked --bundles app
+  npm run tauri -- build --bundles app -- --locked
 )
 BUILT="$SOURCE/src-tauri/target/release/bundle/macos/Elysium.app"
 [ -x "$BUILT/Contents/MacOS/elysium" ] || fail "The app bundle is missing after building."

@@ -78,7 +78,7 @@ fi`,
     'npm',
     `
 [ "$FAIL_BUILD" != 1 ] || exit 23
-if [ "$*" = 'run tauri -- build --locked --bundles app' ]; then
+if [ "$*" = 'run tauri -- build --bundles app -- --locked' ]; then
   mkdir -p src-tauri/target/release/bundle/macos/Elysium.app/Contents/MacOS
   printf '#!/bin/bash\\nexit 0\\n' > src-tauri/target/release/bundle/macos/Elysium.app/Contents/MacOS/elysium
   chmod +x src-tauri/target/release/bundle/macos/Elysium.app/Contents/MacOS/elysium
