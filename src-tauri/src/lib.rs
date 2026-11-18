@@ -18,10 +18,11 @@ pub fn run() {
     let sessions = remote.sessions.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(remote)
         .manage(capture::CaptureState::default())
         .manage(broadcast::BroadcastState::default())
-        .manage(updates::UpdateState::default())
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 if let Some(broadcast) = window.try_state::<broadcast::BroadcastState>() {
@@ -93,8 +94,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             updates::build_info,
             updates::open_commit_page,
-            updates::check_for_updates,
-            updates::install_update,
             broadcast::broadcast_status,
             broadcast::broadcast_activity,
             broadcast::broadcast_pause_room,

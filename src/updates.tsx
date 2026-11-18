@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw } from 'lucide-react';
+import { check as checkRelease, type Update } from '@tauri-apps/plugin-updater';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { desktop, native } from './bridge';
 import './updates.css';
 import type { MouseEvent } from 'react';
@@ -9,25 +11,16 @@ export interface BuildInfo {
   commit: string;
   shortCommit: string;
   dirty: boolean;
-  branch: string;
   repository: string;
-  canInstall: boolean;
-}
-export interface UpdateCheck {
-  commit: string;
-  shortCommit: string;
-  message: string;
-  url: string;
-  available: boolean;
 }
 const AUTO_CHECK_KEY = 'elysium.checkUpdatesOnStartup';
 
 export function useUpdates() {
   const [build, setBuild] = useState<BuildInfo | null>(null);
-  const [latest, setLatest] = useState<UpdateCheck | null>(null);
+  const [latest, setLatest] = useState<Update | null>(null);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
-  const [installerOpened, setInstallerOpened] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [checkedAt, setCheckedAt] = useState<Date | null>(null);
   const [autoCheck, setAutoCheck] = useState(() => {
@@ -37,18 +30,27 @@ export function useUpdates() {
       return true;
     }
   });
+  const updateRef = useRef<Update | null>(null);
   const inFlight = useRef(false);
   const check = useCallback(async () => {
     if (!desktop || inFlight.current) return;
     inFlight.current = true;
     setChecking(true);
     setError('');
-    setLatest(null);
+    setCheckedAt(null);
     try {
-      setLatest(await native<UpdateCheck>('check_for_updates'));
+      const old = updateRef.current;
+      updateRef.current = null;
+      setLatest(null);
+      if (old) await old.close();
+      const update = await checkRelease({ timeout: 15000 });
+      updateRef.current = update;
+      setLatest(update);
       setCheckedAt(new Date());
     } catch (err) {
-      setError(String(err));
+      setError(
+        `Could not check for updates. Please check your connection and try again. ${String(err)}`,
+      );
     } finally {
       inFlight.current = false;
       setChecking(false);
@@ -68,19 +70,28 @@ export function useUpdates() {
     try {
       localStorage.setItem(AUTO_CHECK_KEY, String(enabled));
     } catch {
-      // The session preference still works when persistent storage is unavailable.
+      /* Session preference still works. */
     }
   };
   const install = async () => {
-    if (!latest?.available || installing || installerOpened) return;
+    const update = updateRef.current;
+    if (!update || installing) return;
     setInstalling(true);
+    setProgress(null);
     setError('');
+    let total = 0;
+    let downloaded = 0;
     try {
-      await native('install_update', { commit: latest.commit });
-      setInstallerOpened(true);
+      await update.downloadAndInstall((event) => {
+        if (event.event === 'Started') total = event.data.contentLength ?? 0;
+        if (event.event === 'Progress') {
+          downloaded += event.data.chunkLength;
+          if (total) setProgress(Math.min(100, Math.round((downloaded * 100) / total)));
+        }
+      });
+      await relaunch();
     } catch (err) {
-      setError(String(err));
-    } finally {
+      setError(`The update could not be installed. Please try again. ${String(err)}`);
       setInstalling(false);
     }
   };
@@ -94,7 +105,7 @@ export function useUpdates() {
     latest,
     checking,
     installing,
-    installerOpened,
+    progress,
     error,
     checkedAt,
     autoCheck,
@@ -106,15 +117,15 @@ export function useUpdates() {
 }
 
 export function AppUpdates({ updates }: { updates: ReturnType<typeof useUpdates> }) {
-  const { build, latest, checking, installing, installerOpened, error, checkedAt } = updates;
+  const { build, latest, checking, installing, progress, error, checkedAt } = updates;
   return (
     <section className="app-updates" aria-labelledby="updates-heading">
       <h2 id="updates-heading">Elysium {build?.version} · Updates</h2>
       <p>An independent music and video player by ooberguts.</p>
-      {build ? (
+      {build && (
         <dl className="build-version">
           <div>
-            <dt>Installed commit</dt>
+            <dt>Installed build</dt>
             <dd>
               {/^[0-9a-f]{40}$/.test(build.commit) ? (
                 <a
@@ -127,38 +138,12 @@ export function AppUpdates({ updates }: { updates: ReturnType<typeof useUpdates>
                   <code>{build.shortCommit}</code>
                 </a>
               ) : (
-                <span>Unknown · no Git metadata</span>
+                <span>Unknown</span>
               )}
               {build.dirty && <span className="local-build">Local changes</span>}
             </dd>
           </div>
-          <div>
-            <dt>Update branch</dt>
-            <dd>{build.branch} on GitHub</dd>
-          </div>
-          {latest && (
-            <div>
-              <dt>Latest commit</dt>
-              <dd>
-                <a
-                  href={latest.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  title={latest.commit}
-                  onClick={(event) => updates.openCommit(event, latest.commit)}
-                >
-                  <code>{latest.shortCommit}</code>
-                </a>
-              </dd>
-            </div>
-          )}
         </dl>
-      ) : (
-        <p>
-          {desktop
-            ? 'Reading installed version…'
-            : 'Version checks are available in the desktop app.'}
-        </p>
       )}
       <label className="checkbox-label">
         <input
@@ -168,30 +153,33 @@ export function AppUpdates({ updates }: { updates: ReturnType<typeof useUpdates>
           disabled={!desktop}
         />
         <span>
-          Check GitHub when Elysium starts<small>Updates are installed only when you choose.</small>
+          Check for updates when Elysium starts
+          <small>Updates are installed only when you choose.</small>
         </span>
       </label>
       <div className="update-status" role="status" aria-live="polite">
         {checking ? (
-          'Checking GitHub…'
+          'Checking for updates…'
+        ) : installing ? (
+          progress === null ? (
+            'Preparing update…'
+          ) : (
+            `Downloading update: ${progress}%`
+          )
         ) : latest ? (
           <>
-            <strong>
-              {latest.available
-                ? 'A different commit is available on main.'
-                : build?.dirty
-                  ? 'Your base commit matches main; this build has local changes.'
-                  : 'You’re on the latest commit.'}
-            </strong>
-            <span>{latest.message}</span>
-            {checkedAt && (
-              <small>
-                Checked {checkedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
-              </small>
-            )}
+            <strong>Elysium {latest.version} is available.</strong>
+            {latest.body && <span>{latest.body}</span>}
           </>
+        ) : checkedAt ? (
+          <strong>You’re up to date.</strong>
         ) : (
-          'Check for the latest version from GitHub.'
+          'Check for a new Elysium release.'
+        )}
+        {checkedAt && !checking && !installing && (
+          <small>
+            Checked {checkedAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          </small>
         )}
       </div>
       {error && (
@@ -199,46 +187,25 @@ export function AppUpdates({ updates }: { updates: ReturnType<typeof useUpdates>
           {error}
         </p>
       )}
-      {installerOpened && (
-        <p className="update-handoff" role="status">
-          The update installer is open in your terminal. Follow its progress there. When it says the
-          build is ready, quit Elysium; the installer will replace the app and reopen it. If the
-          installer fails, correct the issue and reopen Elysium to retry.
-        </p>
-      )}
       <div className="settings-actions">
-        <button
-          onClick={() => void updates.check()}
-          disabled={!desktop || checking || installing || installerOpened}
-        >
+        <button onClick={() => void updates.check()} disabled={!desktop || checking || installing}>
           <RefreshCw size={15} className={checking ? 'update-spinning' : undefined} />
           {checking ? 'Checking…' : 'Check for updates'}
         </button>
-        {latest?.available && (
+        {latest && (
           <button
             className="primary"
             onClick={() => void updates.install()}
-            disabled={!build?.canInstall || checking || installing || installerOpened}
+            disabled={checking || installing}
           >
             <Download size={15} />
-            {installerOpened
-              ? 'Installer opened'
-              : installing
-                ? 'Opening installer…'
-                : `Install ${latest.shortCommit}`}
+            {installing ? 'Installing…' : 'Download and install'}
           </button>
         )}
       </div>
-      {build && !build.canInstall && (
-        <p className="update-note">
-          This is a development build or contains local changes. Install a packaged build from a
-          clean Git commit to enable app updates.
-        </p>
-      )}
       <p className="update-note">
-        The installer builds the selected commit from source and installs missing build tools. The
-        first update may take several minutes. Your library and media stay in their existing
-        locations.
+        Updates download a verified, prebuilt app and restart Elysium. Your library and media stay
+        in their existing locations.
       </p>
     </section>
   );

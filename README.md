@@ -129,78 +129,17 @@ Jellyfin is direct-play only. The app does not request server transcoding yet, d
 
 Online movie/poster enrichment, AcoustID fingerprinting, lyric providers, arbitrary smart-playlist rules, iTunes XML import, WMP `.wmz` import, projectM, a separate floating video window, and Linux qualification remain planned work. Metadata writes are enabled only for MP3/FLAC files whose tag data can be preserved; specialized frames may require library-only edits. Batch writes report per-file failures rather than claiming the whole batch succeeded.
 
-## Install from GitHub
+## Install and update
 
-The installers build the official `main` branch locally. They install missing build dependencies, fetch the repository into a managed folder, verify the selected commit belongs to `main`, build with the locked Rust and npm dependencies, and install the finished application. The first build can take several minutes and needs a few GB of free space and an Internet connection. Run as your normal user; platform installers may request administrator approval for system build tools.
+Download the latest prebuilt installer from [Elysium releases](https://github.com/ooberguts/Elysium/releases/latest). On macOS, open the DMG and drag Elysium to Applications. On Windows, run the setup executable. The Windows installer can install the Microsoft WebView2 runtime if it is missing; Git, Node.js, Rust, and Visual Studio build tools are not needed.
 
-**Private repository:** raw GitHub download links require repository access. If you cannot download the script while signed out, download it from GitHub while signed in, or use an authenticated checkout (`gh auth login`, `gh auth setup-git`, then `gh repo clone ooberguts/Elysium`). Run the relevant script from its `scripts` folder. Git needs credentials with read access for both installation and future updates; Elysium does not ask you to save a GitHub token in the app. On Windows, Git Credential Manager can also open a sign-in window during the first clone.
+The published macOS build currently supports Apple Silicon; the Windows build supports x64. These test builds are not notarized by Apple or signed with a Windows code-signing certificate, so the operating system or antivirus software may warn when opening them. Update-package signing verifies that updates come from this project, but does not replace platform code signing.
 
-### macOS
+In **Preferences → Updates**, choose **Check for updates** and then **Download and install**. Elysium downloads and verifies the prebuilt package, installs it, and restarts. Startup checks can be turned off in Preferences. Library data and media stay in their existing locations. Existing versions with the old source-building updater need to install this new release once before they can use the new updater.
 
-Requires **macOS 13.5+** on Apple Silicon or Intel to run the Node.js build tools. In Terminal, from a downloaded/authenticated checkout:
+Each successful push to `main` builds both platforms and publishes a release with a version derived from the GitHub Actions run number. The release is published only after both builds succeed. The updater verifies packages using the public key embedded in the app; GitHub Actions signs them using the `TAURI_SIGNING_PRIVATE_KEY` secret. Keep a secure backup of the private key: losing it prevents existing installations from accepting future updates. The signing key must never be committed.
 
-```sh
-bash scripts/install-macos.sh
-```
-
-For a repository accessible without authentication, download and run the installer directly:
-
-```sh
-installer="$(mktemp -t elysium-install)"
-curl --fail --location --retry 3 https://raw.githubusercontent.com/ooberguts/Elysium/main/scripts/install-macos.sh -o "$installer" && bash "$installer"
-rm -f "$installer"
-```
-
-The script opens Apple's Command Line Tools installer if needed and waits for you to finish it. It installs a private, checksum-verified Node.js 24 toolchain if your Node is missing or too old, and installs/updates Rust stable through rustup. It builds and verifies the locally signed application before replacing an existing copy, then opens Elysium.
-
-- Installed app: `~/Applications/Elysium.app`.
-- Managed checkout: `~/Library/Application Support/Elysium/source/`.
-- Private Node toolchain and install logs: `~/Library/Application Support/Elysium/tools/` and `logs/`.
-- Override the app location with `--app-dir /Applications` if you can write there, or the managed folder with `--root /absolute/path`. Use `--no-launch` to skip opening the installed app.
-
-### Windows
-
-Requires **Windows 10/11 x64** and 64-bit PowerShell 5.1 or newer. From a downloaded/authenticated checkout, run in PowerShell:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1
-```
-
-For a repository accessible without authentication:
-
-```powershell
-$installer = Join-Path ([IO.Path]::GetTempPath()) ('elysium-install-' + [guid]::NewGuid().ToString('N') + '.ps1')
-Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/ooberguts/Elysium/main/scripts/install-windows.ps1 -OutFile $installer
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
-Remove-Item $installer
-```
-
-The script installs missing Git and Visual Studio C++ Build Tools/Windows SDK using WinGet, bootstraps WinGet if missing, installs a private checksum-verified Node.js 24 toolchain if needed, and installs/updates Rust stable with the MSVC toolchain. The Windows installer installs WebView2 when needed, creates the normal app/uninstall entries, and opens Elysium. If a system tool requests a restart, restart Windows and rerun the script.
-
-- Installed app: `%LOCALAPPDATA%\Programs\Elysium\`.
-- Managed checkout: `%LOCALAPPDATA%\Elysium\source\`.
-- Private Node toolchain and logs: `%LOCALAPPDATA%\Elysium\tools\` and `logs\`.
-- Override locations with `-AppDir C:\path\Elysium` or `-Root C:\path\Elysium-build`. Use `-NoLaunch` to skip opening the installed app.
-
-### Versions and updates
-
-The **Git commit is the build version**. Elysium shows its 12-character commit in the header and in **Preferences → Updates**; hovering the commit shows the full 40-character SHA, and Preferences links to that commit on GitHub. The package's base version (currently `0.2.0`) remains available alongside it. Builds with uncommitted files show **Local changes** so they cannot be mistaken for the published commit.
-
-Startup checks are enabled by default and can be switched off in Preferences. **Check for updates** compares the full installed SHA with GitHub `main`; a different SHA displays an Update badge beside Preferences. **Install <commit>** opens Terminal/PowerShell and runs the installer embedded in the installed executable, pinned to the commit you checked. It builds while Elysium stays open; when the terminal says the build is ready, quit Elysium to finish. The installer installs to the current app folder and reopens it. This is a source-build update, so it can install missing build tools and needs the same repository access as the initial installation.
-
-Checks use GitHub's API, falling back to Git's configured credentials for a private repository or API rate limits. Network/authentication failures appear in Preferences and leave the installed app in place. Development builds, unknown-source builds, and builds with local changes can check versions but cannot launch an app update. A failed installer leaves a log in the folder above; correct the issue and reopen Elysium to retry. The managed checkout must be clean, and another installer cannot run concurrently. Library data stays in the separate [application-data folder](#data-and-recovery).
-
-To install a particular historical commit from `main`, supply its full SHA:
-
-```sh
-bash scripts/install-macos.sh --commit FULL_40_CHARACTER_SHA
-```
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Commit FULL_40_CHARACTER_SHA
-```
-
-The macOS installer stages and verifies the replacement beside the destination and restores the previous app if the final move fails. Windows builds the new NSIS installer before starting installation. A small `.elysium-install.json` beside the installed app records a custom managed folder so app updates reuse it. Neither installer resets or discards edits in its managed checkout. Do development work in a separate checkout.
+For developers who want a source build, the scripts `scripts/install-macos.sh` and `scripts/install-windows.ps1` remain available. They install build dependencies and compile locally; the packaged updater does not use those scripts.
 
 ## Run from source
 
