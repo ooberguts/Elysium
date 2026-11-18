@@ -1,4 +1,4 @@
-import { Heart, ImagePlus, Info, ListPlus, Play } from 'lucide-react';
+import { Heart, ImagePlus, Info, ListPlus, MoreHorizontal, Play } from 'lucide-react';
 import { Artwork, Rating } from './components';
 import { albumGroups, filterItems, seconds } from './domain';
 import type { MediaItem } from './types';
@@ -21,6 +21,7 @@ export function CollectionPage({
   query,
   selected,
   currentId,
+  touchMode,
   play,
   select,
   favorite,
@@ -40,6 +41,7 @@ export function CollectionPage({
   query: string;
   selected: Set<string>;
   currentId: string | null;
+  touchMode: boolean;
   play: (item: MediaItem, items: MediaItem[]) => void;
   select: (item: MediaItem, event: React.MouseEvent, collection: MediaItem[]) => void;
   favorite: (item: MediaItem) => void;
@@ -176,7 +178,7 @@ export function CollectionPage({
                   className={`${currentId === item.id ? 'current' : ''} ${selected.has(item.id) ? 'selected' : ''} ${!item.available ? 'unavailable' : ''}`}
                   tabIndex={0}
                   aria-selected={selected.has(item.id)}
-                  draggable
+                  draggable={!touchMode}
                   onDragStart={(event) => {
                     const ids = selected.has(item.id)
                       ? visibleItems.filter((song) => selected.has(song.id)).map((song) => song.id)
@@ -185,7 +187,9 @@ export function CollectionPage({
                     event.dataTransfer.effectAllowed = 'copy';
                   }}
                   onClick={(event) => select(item, event, visibleItems)}
-                  onDoubleClick={() => play(item, album.items)}
+                  onDoubleClick={() => {
+                    if (!touchMode) play(item, album.items);
+                  }}
                   onContextMenu={(event) => contextMenu(item, event)}
                   onKeyDown={(event) => {
                     if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))
@@ -248,6 +252,15 @@ export function CollectionPage({
                   >
                     <Info size={15} />
                   </button>
+                  {touchMode && (
+                    <button
+                      className="icon-button"
+                      aria-label={`Actions for ${item.title}`}
+                      onClick={(event) => contextMenu(item, event)}
+                    >
+                      <MoreHorizontal size={20} />
+                    </button>
+                  )}
                 </li>
               ))}
             </ol>

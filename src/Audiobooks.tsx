@@ -1,4 +1,4 @@
-import { BookOpen, FolderOpen, Info, Play, Plus } from 'lucide-react';
+import { BookOpen, FolderOpen, Info, MoreHorizontal, Play, Plus } from 'lucide-react';
 import { Artwork } from './components';
 import { seconds } from './domain';
 import { listeningProgress } from './listening';
@@ -12,6 +12,7 @@ export function Audiobooks({
   folder,
   info,
   contextMenu,
+  touchMode,
 }: {
   items: MediaItem[];
   play: (item: MediaItem) => void;
@@ -19,6 +20,7 @@ export function Audiobooks({
   folder: () => void;
   info: (item: MediaItem) => void;
   contextMenu: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
+  touchMode: boolean;
 }) {
   const continuing = items.filter((i) => listeningProgress(i).position > 0);
   const card = (item: MediaItem) => {
@@ -71,6 +73,15 @@ export function Audiobooks({
             >
               <Info size={16} />
             </button>
+            {touchMode && (
+              <button
+                className="icon-button"
+                aria-label={`Actions for ${item.title}`}
+                onClick={(event) => contextMenu(item, event)}
+              >
+                <MoreHorizontal size={20} />
+              </button>
+            )}
           </div>
         </div>
       </article>

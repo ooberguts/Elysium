@@ -89,7 +89,8 @@ import { BroadcastTransport } from './broadcast/BroadcastTransport';
 import { Audiobooks } from './Audiobooks';
 import { MetadataDialog } from './MetadataEditor';
 import { ContextMenu, type MenuAction } from './ContextMenu';
-import { contextSelection } from './selection';
+import { contextSelection, selectLibraryItem } from './selection';
+import { InterfaceModeToggle } from './InterfaceModeToggle';
 import { AppUpdates, useUpdates } from './updates';
 import { CollectionPage } from './CollectionPage';
 import { useNavigation } from './navigation';
@@ -117,6 +118,7 @@ import {
 } from './types';
 import './styles.css';
 import './polish.css';
+import './touch.css';
 
 const nav = [
   { id: 'home', label: 'Listen & watch', icon: Home },
@@ -163,6 +165,7 @@ export default function App() {
     [series, setSeries] = useState('');
   const [theme, setTheme] = useState('silver'),
     [compact, setCompact] = useState(false),
+    [touchMode, setTouchMode] = useState(false),
     [grid, setGrid] = useState(false),
     [sort, setSort] = useState('title');
   const [mini, setMini] = useState(false),
@@ -421,6 +424,31 @@ export default function App() {
               : a.title.localeCompare(b.title),
     );
   }, [baseItems, query, series, sort, selectedPlaylist]);
+  const canReorderPlaylist =
+    !!selectedPlaylist &&
+    !selectedPlaylist.rule &&
+    sort === 'playlist' &&
+    !query &&
+    !series &&
+    filtered.length === selectedPlaylist.itemIds.length;
+  function reorderPlaylist(from: number, to: number) {
+    if (
+      !selectedPlaylist ||
+      !canReorderPlaylist ||
+      from === to ||
+      from < 0 ||
+      to < 0 ||
+      from >= selectedPlaylist.itemIds.length ||
+      to >= selectedPlaylist.itemIds.length
+    )
+      return;
+    const itemIds = [...selectedPlaylist.itemIds];
+    const [moved] = itemIds.splice(from, 1);
+    itemIds.splice(to, 0, moved);
+    void native('update_playlist', { id: selectedPlaylist.id, itemIds })
+      .then(refresh)
+      .catch((error) => notify(String(error)));
+  }
   const albums = useMemo(() => albumGroups(filtered.filter((i) => i.kind === 'music')), [filtered]);
   const artists = unique(
     filtered
@@ -515,6 +543,7 @@ export default function App() {
         }
         setTheme(data.settings.theme || 'silver');
         setCompact(data.settings.compact === 'true');
+        setTouchMode(data.settings.interfaceMode === 'touch');
         setVisualMode(
           !data.settings.visualMode ||
             data.settings.visualMode === 'album-art' ||
@@ -561,6 +590,7 @@ export default function App() {
         values: {
           theme,
           compact: String(compact),
+          interfaceMode: touchMode ? 'touch' : 'standard',
           visualMode,
           visualDefaultVersion: '2',
           visualQuality,
@@ -576,6 +606,7 @@ export default function App() {
   }, [
     theme,
     compact,
+    touchMode,
     visualMode,
     visualQuality,
     visualAuto,
@@ -802,6 +833,7 @@ export default function App() {
     ratings?: boolean;
     playlists?: boolean;
     queueIndex?: number;
+    playlistRow?: number;
     playlist?: Playlist;
   };
   const [contextMenu, setContextMenu] = useState<MenuState | null>(null);
@@ -809,6 +841,7 @@ export default function App() {
     items: MediaItem[],
     event: React.MouseEvent | React.KeyboardEvent,
     queueIndex?: number,
+    playlistRow?: number,
   ) {
     event.preventDefault();
     event.stopPropagation();
@@ -816,6 +849,7 @@ export default function App() {
     setContextMenu({
       items,
       queueIndex,
+      playlistRow,
       x: 'clientX' in event ? event.clientX : rect.left + 20,
       y: 'clientY' in event ? event.clientY : rect.top + 20,
     });
@@ -831,10 +865,14 @@ export default function App() {
       y: 'clientY' in event ? event.clientY : rect.top + 20,
     });
   }
-  function openTrackMenu(item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) {
+  function openTrackMenu(
+    item: MediaItem,
+    event: React.MouseEvent | React.KeyboardEvent,
+    rowIndex?: number,
+  ) {
     const targets = contextSelection([...filtered, ...allItems], selected, item);
     if (!selected.has(item.id)) setSelected(new Set([item.id]));
-    openItemMenu(targets, event);
+    openItemMenu(targets, event, undefined, rowIndex);
   }
   function menuActions(menu: MenuState): MenuAction[] {
     if (menu.playlist) {
@@ -924,6 +962,20 @@ export default function App() {
                   }),
               },
             ]),
+        ...(touchMode && canReorderPlaylist && menu.playlistRow !== undefined
+          ? [
+              {
+                label: 'Move up in playlist',
+                disabled: menu.playlistRow === 0,
+                run: () => reorderPlaylist(menu.playlistRow!, menu.playlistRow! - 1),
+              },
+              {
+                label: 'Move down in playlist',
+                disabled: menu.playlistRow >= filtered.length - 1,
+                run: () => reorderPlaylist(menu.playlistRow!, menu.playlistRow! + 1),
+              },
+            ]
+          : []),
         {
           label: 'Add to playlist…',
           disabled: !local || !library.playlists.some((p) => !p.rule),
@@ -1008,18 +1060,13 @@ export default function App() {
   }
   function select(item: MediaItem, event: React.MouseEvent, collection = filtered) {
     const index = collection.findIndex((i) => i.id === item.id);
-    setSelected((prev) => {
-      const next = new Set(event.metaKey || event.ctrlKey ? prev : []);
-      if (event.shiftKey) {
-        for (const i of collection.slice(
-          Math.min(selectedAnchor.current, index),
-          Math.max(selectedAnchor.current, index) + 1,
-        ))
-          next.add(i.id);
-      } else if (next.has(item.id)) next.delete(item.id);
-      else next.add(item.id);
-      return next;
-    });
+    const anchor = selectedAnchor.current;
+    const options = {
+      touch: touchMode,
+      additive: event.metaKey || event.ctrlKey,
+      range: event.shiftKey,
+    };
+    setSelected((prev) => selectLibraryItem(collection, prev, item, anchor, options));
     if (!event.shiftKey) selectedAnchor.current = index;
   }
   function play(item: MediaItem, collection = filtered) {
@@ -1314,7 +1361,7 @@ export default function App() {
         const menu = button?.closest('details');
         if (menu) menu.removeAttribute('open');
       }}
-      className={`app ${mini ? 'mini-mode' : ''} ${compact ? 'compact' : ''} ${theater && nowPlaying && !mini ? 'theater-mode' : ''} ${(nowPlaying || current?.kind === 'audiobook') && !mini ? 'expanded-player' : ''}`}
+      className={`app ${mini ? 'mini-mode' : ''} ${compact && !touchMode ? 'compact' : ''} ${touchMode ? 'touch-mode' : ''} ${theater && nowPlaying && !mini ? 'theater-mode' : ''} ${(nowPlaying || current?.kind === 'audiobook') && !mini ? 'expanded-player' : ''}`}
       data-theme={theme}
       data-controls={showControls ? 'shown' : 'hidden'}
     >
@@ -1386,6 +1433,7 @@ export default function App() {
             </button>
           )}
         </label>
+        <InterfaceModeToggle touch={touchMode} toggle={() => setTouchMode((value) => !value)} />
       </div>
 
       <div className="workspace">
@@ -1587,6 +1635,8 @@ export default function App() {
                 theater={theater}
                 toggleTheater={() => setTheater((t) => !t)}
                 fullScreen={() => void fullScreen()}
+                touchMode={touchMode}
+                toggleTouchMode={() => setTouchMode((value) => !value)}
                 back={() => {
                   setTheater(false);
                   navigate('broadcast');
@@ -1603,6 +1653,10 @@ export default function App() {
                 Library
               </button>
               <span>{current?.title}</span>
+              <InterfaceModeToggle
+                touch={touchMode}
+                toggle={() => setTouchMode((value) => !value)}
+              />
               <button onClick={() => void fullScreen()}>
                 <Maximize2 size={15} /> Full screen
               </button>
@@ -1653,6 +1707,10 @@ export default function App() {
                 <ChevronDown size={12} />
               </button>
               <div className="stage-actions">
+                <InterfaceModeToggle
+                  touch={touchMode}
+                  toggle={() => setTouchMode((value) => !value)}
+                />
                 <button onClick={() => setVisualGallery(true)}>
                   <Grid2X2 size={15} /> Atmospheres
                 </button>
@@ -1759,6 +1817,7 @@ export default function App() {
               />
             ) : view === 'audiobooks' ? (
               <Audiobooks
+                touchMode={touchMode}
                 contextMenu={openTrackMenu}
                 items={filtered}
                 play={(i) => play(i, [i])}
@@ -1882,6 +1941,17 @@ export default function App() {
                 </section>
                 <section>
                   <h2>Appearance</h2>
+                  <label className="checkbox-label interface-preference">
+                    <input
+                      type="checkbox"
+                      checked={touchMode}
+                      onChange={(event) => setTouchMode(event.target.checked)}
+                    />
+                    <span>
+                      Touch-friendly controls
+                      <small>Use larger buttons and tap to select multiple items.</small>
+                    </span>
+                  </label>
                   <div className="theme-choices">
                     <button
                       className={theme === 'silver' ? 'selected' : ''}
@@ -1904,10 +1974,16 @@ export default function App() {
                     <input
                       type="checkbox"
                       checked={compact}
+                      disabled={touchMode}
                       onChange={(e) => setCompact(e.target.checked)}
                     />
                     <span>
-                      Compact song rows<small>More of your collection at a glance.</small>
+                      Compact song rows
+                      <small>
+                        {touchMode
+                          ? 'Available in standard mode.'
+                          : 'More of your collection at a glance.'}
+                      </small>
                     </span>
                   </label>
                 </section>
@@ -2013,6 +2089,7 @@ export default function App() {
                 query={query}
                 selected={selected}
                 currentId={playback.currentId}
+                touchMode={touchMode}
                 play={play}
                 select={select}
                 favorite={(item) => void favorite(item)}
@@ -2091,6 +2168,7 @@ export default function App() {
                       <h2>Pick up where you left off</h2>
                     </div>
                     <MediaCards
+                      touchMode={touchMode}
                       contextMenu={openTrackMenu}
                       items={allItems.filter((i) => i.resume > 0 && i.kind !== 'music').slice(0, 6)}
                       play={(i) => play(i)}
@@ -2170,6 +2248,7 @@ export default function App() {
                       </button>
                     </div>
                     <MediaCards
+                      touchMode={touchMode}
                       contextMenu={openTrackMenu}
                       items={allItems.filter((i) => i.kind === 'movie').slice(0, 6)}
                       play={(i) => play(i)}
@@ -2207,17 +2286,27 @@ export default function App() {
                       </p>
                       {selectedPlaylist && !selectedPlaylist.rule && (
                         <p>
-                          Drag songs to arrange them in list view with Playlist order selected and
-                          filters cleared.
+                          {touchMode
+                            ? canReorderPlaylist
+                              ? 'Use a song’s actions to move it up or down.'
+                              : 'Choose Playlist order and clear filters to move songs.'
+                            : 'Drag songs to arrange them in list view with Playlist order selected and filters cleared.'}
                         </p>
                       )}
                     </div>
                   </div>
                   <div className="view-header-actions">
                     {selectedPlaylist && (
-                      <button onClick={() => setPlaylistEdit(selectedPlaylist)}>
-                        Edit playlist
-                      </button>
+                      <>
+                        <button onClick={() => setPlaylistEdit(selectedPlaylist)}>
+                          Edit playlist
+                        </button>
+                        {touchMode && (
+                          <button onClick={() => setPlaylistDelete(selectedPlaylist)}>
+                            Delete playlist
+                          </button>
+                        )}
+                      </>
                     )}
                     <button className="primary" onClick={() => void importFiles()}>
                       <Plus size={16} />
@@ -2355,6 +2444,7 @@ export default function App() {
                 {view === 'movies' || view === 'tv' ? (
                   <div className="grid-scroll">
                     <MediaCards
+                      touchMode={touchMode}
                       contextMenu={openTrackMenu}
                       items={filtered}
                       play={(i) => play(i)}
@@ -2462,31 +2552,15 @@ export default function App() {
                     favorite={(i) => void favorite(i)}
                     info={(i) => setInfoIds([i.id])}
                     enqueue={player.enqueue}
-                    compact={compact}
+                    compact={compact && !touchMode}
+                    touchMode={touchMode}
                     rate={(i, n) => void rating(i, n)}
                     ratingBusy={ratingBusy}
                     contextMenu={openTrackMenu}
                     openArtist={openArtist}
                     openAlbum={openAlbum}
                     playlistId={selectedPlaylist?.id}
-                    reorder={
-                      selectedPlaylist &&
-                      !selectedPlaylist.rule &&
-                      sort === 'playlist' &&
-                      !query &&
-                      !series &&
-                      filtered.length === selectedPlaylist.itemIds.length
-                        ? (from, to) => {
-                            if (from === to) return;
-                            const itemIds = [...selectedPlaylist.itemIds];
-                            const [moved] = itemIds.splice(from, 1);
-                            itemIds.splice(to, 0, moved);
-                            void native('update_playlist', { id: selectedPlaylist.id, itemIds })
-                              .then(refresh)
-                              .catch((e) => notify(String(e)));
-                          }
-                        : undefined
-                    }
+                    reorder={canReorderPlaylist ? reorderPlaylist : undefined}
                   />
                 )}
               </>
@@ -2621,6 +2695,7 @@ export default function App() {
 
       <div className="mini-header">
         <span>ELYSIUM</span>
+        <InterfaceModeToggle touch={touchMode} toggle={() => setTouchMode((value) => !value)} />
         <button onClick={() => void toggleMini()}>
           <Maximize2 size={13} />
           Library

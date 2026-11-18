@@ -1,0 +1,299 @@
+/* The current interface remains the default; these changes apply only in touch mode. */
+.interface-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
+  min-height: 34px;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+}
+.interface-mode-toggle small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.interface-mode-toggle[aria-pressed='true'] {
+  background: var(--selection);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mini-header .interface-mode-toggle {
+  min-height: 24px;
+  padding: 3px 6px;
+  font-size: 10px;
+}
+.mini-header .interface-mode-toggle svg {
+  width: 13px;
+  height: 13px;
+}
+
+.app.touch-mode:not(.mini-mode) {
+  --player-height: 176px;
+  grid-template-rows: 64px minmax(0, 1fr) 24px var(--player-height);
+}
+.app.touch-mode.expanded-player:not(.mini-mode) {
+  --player-height: 236px;
+}
+.touch-mode:not(.mini-mode) .main-toolbar {
+  gap: 12px;
+  padding: 8px 18px;
+}
+.touch-mode:not(.mini-mode) .main-toolbar .icon-button,
+.touch-mode:not(.mini-mode) .interface-mode-toggle {
+  min-height: 44px;
+  min-width: 44px;
+}
+.touch-mode:not(.mini-mode) .main-toolbar .global-search {
+  height: 44px;
+  min-width: 150px;
+}
+.touch-mode:not(.mini-mode) .main-toolbar .global-search input {
+  font-size: 14px;
+}
+.touch-mode:not(.mini-mode) .library-location {
+  gap: 5px;
+  min-width: 0;
+}
+.touch-mode:not(.mini-mode) .sidebar {
+  padding: 12px 10px;
+}
+.touch-mode:not(.mini-mode) .sidebar-group > button,
+.touch-mode:not(.mini-mode) .preferences-link,
+.touch-mode:not(.mini-mode) .sidebar-library-actions details > summary,
+.touch-mode:not(.mini-mode) .sidebar-action-items > button {
+  min-height: 48px;
+  font-size: 13px;
+}
+.touch-mode:not(.mini-mode) .sidebar-label .icon-button {
+  min-height: 44px;
+  min-width: 44px;
+}
+.touch-mode:not(.mini-mode) .view-controls button,
+.touch-mode:not(.mini-mode) .view-controls select,
+.touch-mode:not(.mini-mode) .view-header-actions button,
+.touch-mode:not(.mini-mode) .settings-actions button,
+.touch-mode:not(.mini-mode) .broadcast-actions button,
+.touch-mode:not(.mini-mode) .direct-join button,
+.touch-mode:not(.mini-mode) .available-stations button,
+.touch-mode:not(.mini-mode) .stage-top button {
+  min-height: 44px;
+  font-size: 13px;
+}
+.touch-mode:not(.mini-mode) .view-controls .icon-button,
+.touch-mode:not(.mini-mode) .view-controls .segmented button {
+  min-width: 44px;
+}
+.touch-mode:not(.mini-mode) input:not([type='checkbox']):not([type='range']),
+.touch-mode:not(.mini-mode) select {
+  min-height: 44px;
+  font-size: 14px;
+}
+.touch-mode:not(.mini-mode) input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+}
+.touch-mode:not(.mini-mode) input[type='range'] {
+  min-height: 32px;
+  touch-action: pan-y;
+}
+.touch-mode:not(.mini-mode) .track-header,
+.touch-mode:not(.mini-mode) .track-row {
+  grid-template-columns: 48px minmax(110px, 1.4fr) minmax(75px, 1fr) minmax(75px, 1fr) 48px 96px;
+}
+.touch-mode:not(.mini-mode) .track-header > span:nth-child(5),
+.touch-mode:not(.mini-mode) .track-row > span:nth-child(5) {
+  display: none;
+}
+.touch-mode:not(.mini-mode) .track-row {
+  font-size: 13px;
+}
+.touch-mode:not(.mini-mode) .track-row > span {
+  padding-left: 5px;
+  padding-right: 5px;
+}
+.touch-mode:not(.mini-mode) .row-play,
+.touch-mode:not(.mini-mode) .row-actions .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 8px;
+}
+.touch-mode:not(.mini-mode) .row-play {
+  opacity: 1;
+  color: var(--accent);
+}
+.touch-mode:not(.mini-mode) .row-play svg {
+  width: 18px;
+  height: 18px;
+}
+.touch-mode:not(.mini-mode) .cover-play {
+  opacity: 1;
+  transform: none;
+  width: 48px;
+  height: 48px;
+}
+.touch-mode:not(.mini-mode) .book-play {
+  opacity: 1;
+  background: #0002;
+}
+.touch-mode:not(.mini-mode) .collection-track-list > li {
+  min-height: 64px;
+  grid-template-columns: 44px minmax(100px, 1fr) 44px 44px 44px 44px;
+  gap: 5px;
+}
+.touch-mode:not(.mini-mode) .collection-track-rating {
+  display: none;
+}
+.touch-mode:not(.mini-mode) .collection-track-play,
+.touch-mode:not(.mini-mode) .collection-track-list .icon-button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.touch-mode:not(.mini-mode) .collection-track-play span {
+  display: none;
+}
+.touch-mode:not(.mini-mode) .collection-track-play svg {
+  display: block;
+}
+.touch-mode:not(.mini-mode) .player-footer {
+  gap: 8px 12px;
+  padding: 9px 16px;
+  align-content: center;
+}
+.touch-mode:not(.mini-mode) .footer-visual,
+.touch-mode:not(.mini-mode) .footer-info .rating {
+  display: none;
+}
+.touch-mode:not(.mini-mode) .footer-playback {
+  min-width: 190px;
+  max-width: none;
+}
+.touch-mode:not(.mini-mode) .footer-transport {
+  gap: 10px;
+  margin-bottom: 0;
+}
+.touch-mode:not(.mini-mode) .footer-transport button,
+.touch-mode:not(.mini-mode) .footer-actions button,
+.touch-mode:not(.mini-mode) .footer-heart,
+.touch-mode:not(.mini-mode) .footer-volume button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.touch-mode:not(.mini-mode) .transport-play {
+  width: 48px;
+  height: 48px;
+}
+.touch-mode:not(.mini-mode) .footer-tools {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 100%;
+  width: 100%;
+  gap: 10px;
+}
+.touch-mode:not(.mini-mode) .footer-volume {
+  width: 170px;
+}
+.touch-mode:not(.mini-mode) .footer-volume input {
+  width: 110px;
+}
+.touch-mode:not(.mini-mode) .footer-actions {
+  gap: 4px;
+}
+.touch-mode:not(.mini-mode) .broadcast-player {
+  flex-wrap: wrap;
+  gap: 5px 12px;
+}
+.touch-mode:not(.mini-mode) .broadcast-player .footer-tools {
+  flex-basis: 100%;
+}
+.touch-mode:not(.mini-mode) .broadcast-player-info {
+  gap: 2px;
+}
+.touch-mode:not(.mini-mode) .footer-extra-controls button,
+.touch-mode:not(.mini-mode) .book-transport button {
+  min-height: 44px;
+}
+.touch-mode .app-context-menu button,
+.touch-mode .context-menu > button {
+  min-height: 48px;
+  font-size: 14px;
+}
+.touch-mode .dialog button {
+  min-height: 44px;
+}
+.touch-mode .dialog input:not([type='checkbox']):not([type='range']),
+.touch-mode .dialog select {
+  min-height: 44px;
+  font-size: 14px;
+}
+.touch-mode .dialog .icon-button {
+  min-width: 44px;
+}
+
+.touch-mode:not(.mini-mode) .media-card {
+  position: relative;
+}
+.touch-mode:not(.mini-mode) .media-touch-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  min-width: 44px;
+  min-height: 44px;
+  background: #0b1724d9;
+  color: white;
+  border-radius: 8px;
+  z-index: 2;
+}
+.touch-mode:not(.mini-mode) .book-actions button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.touch-mode:not(.mini-mode) .media-card .card-title {
+  min-height: 44px;
+}
+
+.app.touch-mode.theater-mode:not(.mini-mode) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.touch-mode:not(.mini-mode) .welcome {
+  justify-content: flex-start;
+  padding: 24px;
+}
+.touch-mode:not(.mini-mode) .welcome-emblem {
+  flex: none;
+  margin-bottom: 12px;
+}
+.touch-mode:not(.mini-mode) .welcome-actions button,
+.touch-mode:not(.mini-mode) .sample-button,
+.touch-mode:not(.mini-mode) .preset-stepper .icon-button {
+  min-height: 44px;
+  min-width: 44px;
+}
+.touch-mode:not(.mini-mode) .album-art-stage > .artwork {
+  width: min(32vh, 34vw, 320px);
+}
+@media (max-height: 650px) {
+  .touch-mode:not(.mini-mode) .album-art-stage > .artwork {
+    width: min(22vh, 30vw, 260px);
+  }
+}
+.touch-mode:not(.mini-mode) .queue-heading button,
+.touch-mode:not(.mini-mode) .queue-item-actions button,
+.touch-mode:not(.mini-mode) .settings-view button,
+.touch-mode:not(.mini-mode) .sources-view button,
+.touch-mode:not(.mini-mode) .broadcast-card button {
+  min-height: 44px;
+}
+.touch-mode:not(.mini-mode) .queue-heading .icon-button,
+.touch-mode:not(.mini-mode) .queue-item-actions .icon-button {
+  min-width: 44px;
+}
+.touch-mode:not(.mini-mode) .queue-item-main {
+  min-height: 56px;
+}

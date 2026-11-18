@@ -14,6 +14,8 @@ Use the [GitHub installation scripts](#install-from-github) below to install dep
 4. Use **Add a library folder** for your own media. A NAS share must first be mounted in Finder or File Explorer; Windows UNC paths can also be entered in Add Folder.
 5. Select items, right-click, and choose **Edit metadata**. Library-only edits are the default. Explicit MP3/FLAC file writes make backups and verify the encoded audio before replacing a file. Use the **Stop** button in the bottom player before writing the current item's file.
 
+Use **Touch mode** in the top navigation bar to switch between the standard layout and larger touch controls. The choice is remembered. In touch mode, tap song rows to select multiple items, use the visible play and actions buttons, and use a playlist track’s actions to move it up or down. Switch back with the same button.
+
 The app never moves or deletes your source media. Compatibility conversion creates a separate cached copy. Testing with a small copied collection is a useful way to check your own tag formats and network setup.
 
 ## Included in this build

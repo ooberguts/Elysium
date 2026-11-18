@@ -3,6 +3,7 @@ import Hls from 'hls.js';
 import { ArrowLeft, Maximize2, Pause, Play, RefreshCw } from 'lucide-react';
 import type { Broadcast } from './useBroadcast';
 import { BroadcastSeek } from './BroadcastSeek';
+import { InterfaceModeToggle } from '../InterfaceModeToggle';
 
 export function BroadcastVideo({
   broadcast: b,
@@ -10,12 +11,16 @@ export function BroadcastVideo({
   theater,
   toggleTheater,
   fullScreen,
+  touchMode,
+  toggleTouchMode,
 }: {
   broadcast: Broadcast;
   back: () => void;
   theater: boolean;
   toggleTheater: () => void;
   fullScreen: () => void;
+  touchMode: boolean;
+  toggleTouchMode: () => void;
 }) {
   const live = b.state.video!;
   const media = useRef<HTMLVideoElement>(null),
@@ -182,6 +187,7 @@ export function BroadcastVideo({
           Listen to broadcasts
         </button>
         <strong>{b.track?.title || b.name}</strong>
+        <InterfaceModeToggle touch={touchMode} toggle={toggleTouchMode} />
         <button onClick={toggleTheater}>{theater ? 'Exit theater' : 'Theater'}</button>
         <button onClick={fullScreen}>
           <Maximize2 size={15} /> Full screen

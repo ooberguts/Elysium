@@ -14,3 +14,21 @@ export function contextSelection<T extends { id: string }>(
   });
   return targets.length ? targets : [clicked];
 }
+
+/** Touch mode keeps prior choices so multiple items can be selected without modifier keys. */
+export function selectLibraryItem<T extends { id: string }>(
+  items: T[],
+  selected: ReadonlySet<string>,
+  clicked: T,
+  anchor: number,
+  options: { touch: boolean; additive: boolean; range: boolean },
+): Set<string> {
+  const index = items.findIndex((item) => item.id === clicked.id);
+  const next = new Set(options.touch || options.additive ? selected : []);
+  if (options.range && index >= 0) {
+    for (const item of items.slice(Math.min(anchor, index), Math.max(anchor, index) + 1))
+      next.add(item.id);
+  } else if (next.has(clicked.id)) next.delete(clicked.id);
+  else next.add(clicked.id);
+  return next;
+}

@@ -145,6 +145,7 @@ export function TrackTable({
   info,
   enqueue,
   compact,
+  touchMode,
   rate,
   ratingBusy,
   contextMenu,
@@ -162,9 +163,14 @@ export function TrackTable({
   info: (item: MediaItem) => void;
   enqueue: (id: string, next?: boolean) => void;
   compact: boolean;
+  touchMode: boolean;
   rate: (item: MediaItem, rating: number) => void;
   ratingBusy: ReadonlySet<string>;
-  contextMenu: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
+  contextMenu: (
+    item: MediaItem,
+    event: React.MouseEvent | React.KeyboardEvent,
+    rowIndex?: number,
+  ) => void;
   openArtist?: (artist: string) => void;
   openAlbum?: (item: MediaItem) => void;
   reorder?: (from: number, to: number) => void;
@@ -174,10 +180,10 @@ export function TrackTable({
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => parent.current,
-    estimateSize: () => (compact ? 35 : 46),
+    estimateSize: () => (touchMode ? 60 : compact ? 35 : 46),
     overscan: 12,
   });
-  useEffect(() => virtualizer.measure(), [compact, virtualizer]);
+  useEffect(() => virtualizer.measure(), [compact, touchMode, virtualizer]);
   return (
     <div className="track-table">
       <div className="track-header">
@@ -208,10 +214,10 @@ export function TrackTable({
                 tabIndex={0}
                 onKeyDown={(e) => {
                   if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10'))
-                    contextMenu(item, e);
+                    contextMenu(item, e, row.index);
                 }}
                 aria-selected={selected.has(item.id)}
-                draggable
+                draggable={!touchMode}
                 onDragStart={(e) => {
                   const ids = selected.has(item.id)
                     ? items.filter((i) => selected.has(i.id)).map((i) => i.id)
@@ -243,8 +249,10 @@ export function TrackTable({
                   }
                 }}
                 onClick={(e) => select(item, e)}
-                onDoubleClick={() => play(item)}
-                onContextMenu={(e) => contextMenu(item, e)}
+                onDoubleClick={() => {
+                  if (!touchMode) play(item);
+                }}
+                onContextMenu={(e) => contextMenu(item, e, row.index)}
               >
                 <span role="cell">
                   <button
@@ -313,25 +321,35 @@ export function TrackTable({
                   >
                     <Heart size={14} fill={item.favorite ? 'currentColor' : 'none'} />
                   </button>
-                  <details onClick={(e) => e.stopPropagation()}>
-                    <summary aria-label={`Actions for ${item.title}`}>
-                      <MoreHorizontal size={17} />
-                    </summary>
-                    <div className="context-menu">
-                      <button onClick={() => enqueue(item.id, true)}>
-                        <Play size={14} />
-                        Play next
-                      </button>
-                      <button onClick={() => enqueue(item.id)}>
-                        <ListPlus size={14} />
-                        Add to queue
-                      </button>
-                      <button onClick={() => info(item)}>
-                        <Info size={14} />
-                        Edit metadata
-                      </button>
-                    </div>
-                  </details>
+                  {touchMode ? (
+                    <button
+                      className="icon-button"
+                      aria-label={`Actions for ${item.title}`}
+                      onClick={(event) => contextMenu(item, event, row.index)}
+                    >
+                      <MoreHorizontal size={20} />
+                    </button>
+                  ) : (
+                    <details onClick={(e) => e.stopPropagation()}>
+                      <summary aria-label={`Actions for ${item.title}`}>
+                        <MoreHorizontal size={17} />
+                      </summary>
+                      <div className="context-menu">
+                        <button onClick={() => enqueue(item.id, true)}>
+                          <Play size={14} />
+                          Play next
+                        </button>
+                        <button onClick={() => enqueue(item.id)}>
+                          <ListPlus size={14} />
+                          Add to queue
+                        </button>
+                        <button onClick={() => info(item)}>
+                          <Info size={14} />
+                          Edit metadata
+                        </button>
+                      </div>
+                    </details>
+                  )}
                 </span>
               </div>
             );
@@ -354,12 +372,14 @@ export function MediaCards({
   play,
   detail,
   contextMenu,
+  touchMode = false,
   television = false,
 }: {
   items: MediaItem[];
   play: (item: MediaItem) => void;
   detail: (item: MediaItem) => void;
   contextMenu?: (item: MediaItem, event: React.MouseEvent | React.KeyboardEvent) => void;
+  touchMode?: boolean;
   television?: boolean;
 }) {
   return (
@@ -395,6 +415,15 @@ export function MediaCards({
               </span>
             )}
           </button>
+          {touchMode && contextMenu && (
+            <button
+              className="media-touch-actions icon-button"
+              aria-label={`Actions for ${item.title}`}
+              onClick={(event) => contextMenu(item, event)}
+            >
+              <MoreHorizontal size={20} />
+            </button>
+          )}
           <button className="card-title" onClick={() => detail(item)}>
             {item.title}
           </button>
